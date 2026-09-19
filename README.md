@@ -4,6 +4,22 @@ A Tampermonkey userscript that puts Tempo worklogs, schedules and time trackers 
 
 **[Install the userscript](https://raw.githubusercontent.com/contione/tampermonkey-userscript/main/dist/tempo.user.js)**
 
+## Preview
+
+The actual userscript panel, shown with fictional Jira issues and sample worklogs in an isolated demo.
+
+### Desktop
+
+View your worklogs and schedule totals, then log time without leaving the current issue.
+
+![Tempo worklog panel beside a Jira demo issue, with monthly totals, worklog rows and the logging form](docs/images/desktop.png)
+
+### Narrow screens
+
+The panel fills the available width and scrolls vertically to keep all controls accessible.
+
+<img src="docs/images/mobile.png" alt="Tempo panel at a 390-pixel viewport, showing worklogs and the time entry form" width="390">
+
 ## Installation
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/) from your browser's official extension store.
