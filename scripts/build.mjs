@@ -19,7 +19,7 @@ const header = `// ==UserScript==
 // @grant        GM.setValue
 // @grant        GM_addValueChangeListener
 // @grant        GM_registerMenuCommand
-// @run-at       document-idle
+// @run-at       document-start
 // @noframes
 // @updateURL    ${base}/tempo.meta.js
 // @downloadURL  ${base}/tempo.user.js

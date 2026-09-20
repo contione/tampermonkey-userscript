@@ -19,6 +19,19 @@ label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 13px; 
 .primary { background: #0d9488; border-color: #0d9488; color: white; font-weight: 600; } .wide { width: 100%; } .danger { color: #b42318; } .small { font-size: 12px; padding: 4px 8px; }
 .summary { margin: 10px 0 12px; line-height: 1.7; } .summary strong { font-variant-numeric: tabular-nums; }
 .range-controls { align-items: flex-end; margin-bottom: 12px; } .range-controls label { margin-bottom: 0; } .range-controls select { margin-top: 5px; } .monthly { margin: 0 0 14px; } .monthly p { margin: 6px 0; } .day-heading th { background: #edf6f5; color: #156a54; }
+.panel { container-type: inline-size; container-name: tempo; }
+.worklog-layout { display: grid; gap: 24px; } .worklog-list,.log-editor { min-width: 0; }
+.log-editor { border-top: 1px solid #dce3ed; padding-top: 18px; } .log-editor h2 { margin: 0 0 16px; }
+.log-options { margin: 0 0 16px; } .log-options > .grid { margin-top: 12px; }
+.range-controls button { padding: 9px 10px; font-size: 13px; white-space: nowrap; }
+.worklog-list .table-wrap { max-height: min(44vh, 480px); } .worklog-list thead th { position: sticky; top: 0; z-index: 1; }
+input[type=date] { cursor: pointer; min-width: 0; }
+@container tempo (min-width: 780px) {
+  .worklog-layout { grid-template-columns: minmax(0, 1fr) minmax(280px, .82fr); gap: 22px; align-items: start; }
+  .log-editor { position: sticky; top: 0; border-top: 0; border-left: 1px solid #dce3ed; padding: 0 0 0 22px; }
+  .worklog-list .table-wrap { max-height: calc(100dvh - 370px); }
+  .quick-log { display: none; }
+}
 .table-wrap { overflow-x: auto; } table { border-collapse: collapse; width: 100%; font-size: 13px; } th { background: #f4f6fa; font-weight: 600; text-align: left; } th,td { padding: 10px 8px; border-bottom: 1px solid #dce3ed; vertical-align: top; } a { color: #1264a3; text-decoration: none; } a:hover { text-decoration: underline; } td p { margin: 4px 0; overflow-wrap: anywhere; font-size: 12px; } .nowrap { white-space: nowrap; } .empty { color: #62758d; padding: 20px 0; }
 hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; } .tracker { padding: 15px 0; border-bottom: 1px solid #dce3ed; } .tracker-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; } .tracker-title strong { font-size: 16px; } details { margin-top: 8px; } summary { cursor: pointer; color: #62758d; }
 @media(max-width: 560px) { .panel { inset: 0; width: 100%; max-width: 100%; border-radius: 0; } header { padding: 16px; } nav { padding: 0 12px; } main { padding: 16px; } .status { margin: 0 16px 8px; } .grid { gap: 10px; } th,td { padding: 8px 5px; } }

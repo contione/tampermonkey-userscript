@@ -8,7 +8,15 @@ declare function GM_registerMenuCommand(label: string, callback: () => void): vo
 
 const DEFAULT_TASK_LABEL = 'Config/Coding/Dev/Testing - SW Development'
 
-if (!document.getElementById('tempo-userscript')) mount()
+// Install before Jira registers global capture handlers. Shadow DOM retargets
+// keyboard events to our host, so Jira cannot recognize its inputs as editors.
+let handlePanelKey: ((event: KeyboardEvent) => void) | undefined
+for (const type of ['keydown', 'keypress', 'keyup']) {
+  window.addEventListener(type, event => handlePanelKey?.(event as KeyboardEvent), true)
+}
+function initialize(): void { if (!document.getElementById('tempo-userscript')) mount() }
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initialize, { once: true })
+else initialize()
 
 function mount(): void {
   const host = document.createElement('div')
@@ -39,6 +47,7 @@ function mount(): void {
   const selected = new Set<string>()
   const drafts: Record<string, string> = { range: 'recent', from: selectedRange.from, to: selectedRange.to, logDate: resolveDate('') }
   let verbose = false
+  let pendingStoreRender = false
 
   function notice(message: string, error = false): void {
     status.textContent = message
@@ -56,7 +65,16 @@ function mount(): void {
   launcher.onclick = open
   root.querySelector<HTMLButtonElement>('.close')!.onclick = close
   GM_registerMenuCommand('Open Tempo', open)
-  root.addEventListener('keydown', e => { if ((e as KeyboardEvent).key === 'Escape') close() })
+  handlePanelKey = event => {
+    if (!event.composedPath().includes(host)) return
+    event.stopImmediatePropagation()
+    // Keep native text editing, clipboard shortcuts, Tab and IME processing.
+    if (event.type === 'keydown' && event.key === 'Escape' && !event.isComposing && event.keyCode !== 229
+      && !root.activeElement?.matches('input[type="date"], select')) close()
+  }
+  for (const type of ['beforeinput', 'input', 'change', 'compositionstart', 'compositionupdate', 'compositionend']) {
+    root.addEventListener(type, event => event.stopPropagation())
+  }
   root.querySelector('nav')!.addEventListener('click', e => {
     const button = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-tab]')
     if (!button || busy) return
@@ -90,12 +108,34 @@ function mount(): void {
     if (name) void run(() => submit(name))
   })
   main.addEventListener('click', e => {
+    const target = e.target as HTMLElement
+    if (target instanceof HTMLInputElement && target.type === 'date' && !target.disabled && typeof target.showPicker === 'function') {
+      try { target.focus(); target.showPicker(); e.preventDefault() } catch { /* Keep the browser's native picker available. */ }
+      return
+    }
     const button = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-action]')
+    if (button?.dataset.action === 'show-log') {
+      main.querySelector('.log-editor')?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      main.querySelector<HTMLInputElement>('[name="issue"]')?.focus({ preventScroll: true })
+      return
+    }
     if (button) void run(() => action(button.dataset.action!, button.dataset.id))
   })
-  subscribe(() => { if (!busy && !panel.hidden && (tab === 'Trackers' || tab === 'Aliases')) render() })
+  main.addEventListener('toggle', event => {
+    const details = event.target as HTMLDetailsElement
+    if (details.classList.contains('log-options')) drafts.logOptions = details.open ? 'open' : ''
+  }, true)
+  function isEditing(): boolean { return !!root.activeElement?.matches('input, textarea, select, [contenteditable]') }
+  subscribe(() => {
+    if (!busy && !panel.hidden && (tab === 'Trackers' || tab === 'Aliases')) {
+      if (isEditing()) pendingStoreRender = true
+      else render()
+    }
+  })
   setInterval(() => {
-    if (panel.hidden || tab !== 'Trackers') return
+    if (panel.hidden) return
+    if (pendingStoreRender && !busy && !isEditing()) render()
+    if (tab !== 'Trackers') return
     const state = readState()
     for (const node of root.querySelectorAll<HTMLElement>('[data-duration]')) {
       const tracker = state.trackers[node.dataset.duration!]
@@ -305,7 +345,7 @@ function mount(): void {
   function renderAttributes(prefix: string): string {
     if (!workAttributes) return `<p class="muted">${escape(attributeError || 'Load Tempo work attributes before logging time.')}</p>${button('attributes-refresh', 'Load work attributes', undefined, 'small')}`
     if (!workAttributes.length) return ''
-    return `<h2>Work attributes</h2>${workAttributes.map(attribute => {
+    return `${prefix === 'stop' ? '<h2>Work attributes</h2>' : ''}${workAttributes.map(attribute => {
       const name = `${prefix}Attribute:${attribute.key}`
       const value = drafts[name] || ''
       const label = `${escape(attribute.name)} (${attribute.required ? 'required' : 'optional'})`
@@ -316,6 +356,7 @@ function mount(): void {
     }).join('')}`
   }
   function render(): void {
+    pendingStoreRender = false
     const state = readState()
     root.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(b => { b.setAttribute('aria-selected', String(b.dataset.tab === tab)); b.disabled = busy })
     if (tab === 'Settings') {
@@ -346,7 +387,7 @@ function mount(): void {
       const sum = (items: Worklog[]) => items.reduce((n,w) => n + w.timeSpentSeconds, 0)
       const required = schedule.filter(d => d.date >= selectedRange.from && d.date <= selectedRange.to).reduce((n,d) => n + d.requiredSeconds, 0)
       const today = resolveDate('')
-      main.innerHTML = `<div class="row range-controls"><label>Date range<select name="range">${[['recent','Last 7 days'],['week','This week'],['previous','Last week'],['custom','Custom']].map(([value,label]) => `<option value="${value}" ${drafts.range === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>${button('refresh','Refresh')}</div>
+      main.innerHTML = `<div class="worklog-layout"><section class="worklog-list" aria-label="Worklog list"><div class="row range-controls"><label>Date range<select name="range">${[['recent','Last 7 days'],['week','This week'],['previous','Last week'],['custom','Custom']].map(([value,label]) => `<option value="${value}" ${drafts.range === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>${button('refresh','Refresh')}${button('show-log','Log work',undefined,'primary quick-log')}</div>
       ${drafts.range === 'custom' ? `<form data-form="range"><div class="grid">${field('from','From','','date')}${field('to','To','','date')}</div><button type="submit" class="small primary">Apply dates</button></form>` : ''}
       ${loaded ? `<div class="summary" aria-label="Range summary">${selectedRange.from} – ${selectedRange.to}<br>Selected range: <strong>${duration(sum(rangeLogs))} / ${duration(required)}</strong></div>
       <details class="monthly"><summary>Monthly progress</summary>${rangeMonths(selectedRange).map(({month}) => {
@@ -365,11 +406,12 @@ function mount(): void {
         ${dayLogs.map(w => `<tr><td><input type="checkbox" aria-label="Select worklog ${escape(w.id)}" data-select="${escape(w.id)}" ${selected.has(w.id) ? 'checked' : ''}></td><td class="nowrap">${escape(w.startTime.slice(0,5))}–${endTime(w)}</td><td><a target="_blank" rel="noopener noreferrer" href="https://${location.hostname}/browse/${encodeURIComponent(issueKeys.get(w.issueId) || w.issueId)}">${escape(issueKeys.get(w.issueId) || `#${w.issueId}`)}</a>${aliasLabels(state,w)}${verbose ? `<p>${escape(w.description)}</p><small>#${escape(w.id)}</small>` : ''}</td><td>${duration(w.timeSpentSeconds)}</td><td>${button('delete','Delete',w.id,'small danger')}</td></tr>`).join('')}</tbody>`
       }).join('')}</table></div>${loaded && !rangeLogs.length ? '<p class="empty">No worklogs for this range.</p>' : ''}
       ${rangeLogs.length ? `<div class="actions">${button('delete-selected','Delete selected',undefined,'small danger')}</div>` : ''}
-      <hr><h2>Log work</h2><form data-form="worklog">${field('logDate','Worklog date','','date')}<div class="row">${field('issue','Issue or alias','NOVA-318','text',currentIssue())}
-      ${button('current','Use current issue',undefined,'small')}</div><div class="grid">${field('work','Duration or interval','1h20m or 09:40-11:00')}${field('start','Start time (optional)','09:40')}</div>
-      <label>Description<textarea name="description">${escape(drafts.description || '')}</textarea></label>${field('estimate','Remaining estimate (optional)','2h')}
+      </section><section class="log-editor" aria-label="Log work editor"><h2>Log work</h2><form data-form="worklog"><div class="grid">${field('logDate','Worklog date','','date')}${field('work','Duration or interval','1h20m or 09:40-11:00')}</div>
+      <div class="row">${field('issue','Issue or alias','NOVA-318','text',currentIssue())}${button('current','Use current issue',undefined,'small')}</div>
       ${renderAttributes('work')}
-      <button class="primary wide" type="submit">Save worklog</button></form>`
+      <label>Description<textarea name="description">${escape(drafts.description || '')}</textarea></label>
+      <details class="log-options" ${drafts.logOptions === 'open' ? 'open' : ''}><summary>More options</summary><div class="grid">${field('start','Start time (optional)','09:40')}${field('estimate','Remaining estimate (optional)','2h')}</div></details>
+      <button class="primary wide" type="submit">Save worklog</button></form></section></div>`
     }
   }
   function aliasLabels(state: State,w: Worklog): string {

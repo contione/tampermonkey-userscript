@@ -35,6 +35,7 @@ test('creates interval worklog, shows details and deletes selection',async ({pag
   await page.getByLabel('Issue or alias',{exact:true}).fill('review')
   await page.getByLabel('Duration or interval',{exact:true}).fill('14:00-14:35')
   await page.getByLabel('Description',{exact:true}).fill('<script>alert(1)</script>')
+  await page.getByText('More options', {exact: true}).click()
   await page.getByLabel('Remaining estimate (optional)',{exact:true}).fill('0h')
   await page.getByRole('button',{name:'Save worklog'}).click()
   await expect(page.getByRole('status')).toContainText('Saved 35m to NOVA-318')
@@ -384,4 +385,44 @@ test('invalid custom dates make no requests and failed refresh preserves the dis
   await expect(page.getByRole('status')).toContainText('Unauthorized access to Tempo')
   await expect(page.getByLabel('Range summary')).toContainText('2026-09-14 – 2026-09-20')
   await expect(page.getByLabel('Select worklog 931842')).toBeVisible()
+})
+
+test('clicking the text area of every date field opens the native calendar', async ({page}) => {
+  await launch(page)
+  await page.evaluate(() => {
+    const original = HTMLInputElement.prototype.showPicker
+    ;(window as any).__openedPickers = []
+    HTMLInputElement.prototype.showPicker = function () {
+      original.call(this)
+      ;(window as any).__openedPickers.push(this.name)
+    }
+  })
+  await page.getByLabel('Worklog date', {exact: true}).click({position: {x: 16, y: 20}})
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('region', {name: 'Tempo panel'})).toBeVisible()
+  await page.getByRole('combobox', {name: 'Date range', exact: true}).selectOption('custom')
+  for (const label of ['From', 'To']) {
+    await page.getByLabel(label, {exact: true}).click({position: {x: 16, y: 20}})
+    await page.keyboard.press('Escape')
+  }
+  expect(await page.evaluate(() => (window as any).__openedPickers)).toEqual(['logDate', 'from', 'to'])
+  await expect(page.getByRole('region', {name: 'Tempo panel'})).toBeVisible()
+})
+
+test('wide panel shows the editor beside the list and narrow panel provides a form shortcut', async ({page}) => {
+  await launch(page)
+  const list = await page.getByRole('region', {name: 'Worklog list', exact: true}).boundingBox()
+  const editor = await page.getByRole('region', {name: 'Log work editor', exact: true}).boundingBox()
+  expect(editor!.x).toBeGreaterThanOrEqual(list!.x + list!.width)
+  await expect(page.getByRole('button', {name: 'Save worklog'})).toBeInViewport()
+  await expect(page.getByLabel('Remaining estimate (optional)', {exact: true})).toBeHidden()
+  await page.getByText('More options', {exact: true}).click()
+  await page.getByLabel('Remaining estimate (optional)', {exact: true}).fill('2h')
+  await page.getByRole('button', {name: 'Refresh', exact: true}).click()
+  await expect(page.getByLabel('Remaining estimate (optional)', {exact: true})).toHaveValue('2h')
+  await expect(page.getByLabel('Remaining estimate (optional)', {exact: true})).toBeVisible()
+  await page.setViewportSize({width: 390, height: 844})
+  await page.getByRole('button', {name: 'Log work', exact: true}).click()
+  await expect(page.getByLabel('Issue or alias', {exact: true})).toBeFocused()
+  await expect(page.getByLabel('Issue or alias', {exact: true})).toBeInViewport()
 })

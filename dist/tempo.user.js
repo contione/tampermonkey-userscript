@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tempo for Jira
 // @namespace    https://github.com/contione/tampermonkey-userscript
-// @version      0.1.5
+// @version      0.1.6
 // @description  Worklogs, schedules, aliases and persistent time trackers inside Jira Cloud.
 // @author       contione
 // @license      MIT
@@ -15,7 +15,7 @@
 // @grant        GM.setValue
 // @grant        GM_addValueChangeListener
 // @grant        GM_registerMenuCommand
-// @run-at       document-idle
+// @run-at       document-start
 // @noframes
 // @updateURL    https://raw.githubusercontent.com/contione/tampermonkey-userscript/main/dist/tempo.meta.js
 // @downloadURL  https://raw.githubusercontent.com/contione/tampermonkey-userscript/main/dist/tempo.user.js
@@ -688,6 +688,19 @@ label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 13px; 
 .primary { background: #0d9488; border-color: #0d9488; color: white; font-weight: 600; } .wide { width: 100%; } .danger { color: #b42318; } .small { font-size: 12px; padding: 4px 8px; }
 .summary { margin: 10px 0 12px; line-height: 1.7; } .summary strong { font-variant-numeric: tabular-nums; }
 .range-controls { align-items: flex-end; margin-bottom: 12px; } .range-controls label { margin-bottom: 0; } .range-controls select { margin-top: 5px; } .monthly { margin: 0 0 14px; } .monthly p { margin: 6px 0; } .day-heading th { background: #edf6f5; color: #156a54; }
+.panel { container-type: inline-size; container-name: tempo; }
+.worklog-layout { display: grid; gap: 24px; } .worklog-list,.log-editor { min-width: 0; }
+.log-editor { border-top: 1px solid #dce3ed; padding-top: 18px; } .log-editor h2 { margin: 0 0 16px; }
+.log-options { margin: 0 0 16px; } .log-options > .grid { margin-top: 12px; }
+.range-controls button { padding: 9px 10px; font-size: 13px; white-space: nowrap; }
+.worklog-list .table-wrap { max-height: min(44vh, 480px); } .worklog-list thead th { position: sticky; top: 0; z-index: 1; }
+input[type=date] { cursor: pointer; min-width: 0; }
+@container tempo (min-width: 780px) {
+  .worklog-layout { grid-template-columns: minmax(0, 1fr) minmax(280px, .82fr); gap: 22px; align-items: start; }
+  .log-editor { position: sticky; top: 0; border-top: 0; border-left: 1px solid #dce3ed; padding: 0 0 0 22px; }
+  .worklog-list .table-wrap { max-height: calc(100dvh - 370px); }
+  .quick-log { display: none; }
+}
 .table-wrap { overflow-x: auto; } table { border-collapse: collapse; width: 100%; font-size: 13px; } th { background: #f4f6fa; font-weight: 600; text-align: left; } th,td { padding: 10px 8px; border-bottom: 1px solid #dce3ed; vertical-align: top; } a { color: #1264a3; text-decoration: none; } a:hover { text-decoration: underline; } td p { margin: 4px 0; overflow-wrap: anywhere; font-size: 12px; } .nowrap { white-space: nowrap; } .empty { color: #62758d; padding: 20px 0; }
 hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; } .tracker { padding: 15px 0; border-bottom: 1px solid #dce3ed; } .tracker-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; } .tracker-title strong { font-size: 16px; } details { margin-top: 8px; } summary { cursor: pointer; color: #62758d; }
 @media(max-width: 560px) { .panel { inset: 0; width: 100%; max-width: 100%; border-radius: 0; } header { padding: 16px; } nav { padding: 0 12px; } main { padding: 16px; } .status { margin: 0 16px 8px; } .grid { gap: 10px; } th,td { padding: 8px 5px; } }
@@ -766,7 +779,15 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
 
   // src/main.ts
   var DEFAULT_TASK_LABEL = "Config/Coding/Dev/Testing - SW Development";
-  if (!document.getElementById("tempo-userscript")) mount();
+  var handlePanelKey;
+  for (const type of ["keydown", "keypress", "keyup"]) {
+    window.addEventListener(type, (event) => handlePanelKey?.(event), true);
+  }
+  function initialize() {
+    if (!document.getElementById("tempo-userscript")) mount();
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initialize, { once: true });
+  else initialize();
   function mount() {
     const host = document.createElement("div");
     host.id = "tempo-userscript";
@@ -797,6 +818,7 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
     const selected = /* @__PURE__ */ new Set();
     const drafts = { range: "recent", from: selectedRange.from, to: selectedRange.to, logDate: resolveDate("") };
     let verbose = false;
+    let pendingStoreRender = false;
     function notice(message, error = false) {
       status.textContent = message;
       status.classList.toggle("error", error);
@@ -817,9 +839,14 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
     launcher.onclick = open;
     root.querySelector(".close").onclick = close;
     GM_registerMenuCommand("Open Tempo", open);
-    root.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") close();
-    });
+    handlePanelKey = (event) => {
+      if (!event.composedPath().includes(host)) return;
+      event.stopImmediatePropagation();
+      if (event.type === "keydown" && event.key === "Escape" && !event.isComposing && event.keyCode !== 229 && !root.activeElement?.matches('input[type="date"], select')) close();
+    };
+    for (const type of ["beforeinput", "input", "change", "compositionstart", "compositionupdate", "compositionend"]) {
+      root.addEventListener(type, (event) => event.stopPropagation());
+    }
     root.querySelector("nav").addEventListener("click", (e) => {
       const button2 = e.target.closest("[data-tab]");
       if (!button2 || busy) return;
@@ -861,14 +888,41 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
       if (name) void run(() => submit(name));
     });
     main.addEventListener("click", (e) => {
+      const target = e.target;
+      if (target instanceof HTMLInputElement && target.type === "date" && !target.disabled && typeof target.showPicker === "function") {
+        try {
+          target.focus();
+          target.showPicker();
+          e.preventDefault();
+        } catch {
+        }
+        return;
+      }
       const button2 = e.target.closest("button[data-action]");
+      if (button2?.dataset.action === "show-log") {
+        main.querySelector(".log-editor")?.scrollIntoView({ block: "start", behavior: "smooth" });
+        main.querySelector('[name="issue"]')?.focus({ preventScroll: true });
+        return;
+      }
       if (button2) void run(() => action(button2.dataset.action, button2.dataset.id));
     });
+    main.addEventListener("toggle", (event) => {
+      const details = event.target;
+      if (details.classList.contains("log-options")) drafts.logOptions = details.open ? "open" : "";
+    }, true);
+    function isEditing() {
+      return !!root.activeElement?.matches("input, textarea, select, [contenteditable]");
+    }
     subscribe(() => {
-      if (!busy && !panel.hidden && (tab === "Trackers" || tab === "Aliases")) render();
+      if (!busy && !panel.hidden && (tab === "Trackers" || tab === "Aliases")) {
+        if (isEditing()) pendingStoreRender = true;
+        else render();
+      }
     });
     setInterval(() => {
-      if (panel.hidden || tab !== "Trackers") return;
+      if (panel.hidden) return;
+      if (pendingStoreRender && !busy && !isEditing()) render();
+      if (tab !== "Trackers") return;
       const state = readState();
       for (const node of root.querySelectorAll("[data-duration]")) {
         const tracker = state.trackers[node.dataset.duration];
@@ -1178,7 +1232,7 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
     function renderAttributes(prefix) {
       if (!workAttributes) return `<p class="muted">${escape(attributeError || "Load Tempo work attributes before logging time.")}</p>${button("attributes-refresh", "Load work attributes", void 0, "small")}`;
       if (!workAttributes.length) return "";
-      return `<h2>Work attributes</h2>${workAttributes.map((attribute) => {
+      return `${prefix === "stop" ? "<h2>Work attributes</h2>" : ""}${workAttributes.map((attribute) => {
         const name = `${prefix}Attribute:${attribute.key}`;
         const value = drafts[name] || "";
         const label = `${escape(attribute.name)} (${attribute.required ? "required" : "optional"})`;
@@ -1188,6 +1242,7 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
       }).join("")}`;
     }
     function render() {
+      pendingStoreRender = false;
       const state = readState();
       root.querySelectorAll("[data-tab]").forEach((b) => {
         b.setAttribute("aria-selected", String(b.dataset.tab === tab));
@@ -1220,7 +1275,7 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
         const sum = (items) => items.reduce((n, w) => n + w.timeSpentSeconds, 0);
         const required = schedule.filter((d) => d.date >= selectedRange.from && d.date <= selectedRange.to).reduce((n, d) => n + d.requiredSeconds, 0);
         const today = resolveDate("");
-        main.innerHTML = `<div class="row range-controls"><label>Date range<select name="range">${[["recent", "Last 7 days"], ["week", "This week"], ["previous", "Last week"], ["custom", "Custom"]].map(([value, label]) => `<option value="${value}" ${drafts.range === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>${button("refresh", "Refresh")}</div>
+        main.innerHTML = `<div class="worklog-layout"><section class="worklog-list" aria-label="Worklog list"><div class="row range-controls"><label>Date range<select name="range">${[["recent", "Last 7 days"], ["week", "This week"], ["previous", "Last week"], ["custom", "Custom"]].map(([value, label]) => `<option value="${value}" ${drafts.range === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>${button("refresh", "Refresh")}${button("show-log", "Log work", void 0, "primary quick-log")}</div>
       ${drafts.range === "custom" ? `<form data-form="range"><div class="grid">${field("from", "From", "", "date")}${field("to", "To", "", "date")}</div><button type="submit" class="small primary">Apply dates</button></form>` : ""}
       ${loaded ? `<div class="summary" aria-label="Range summary">${selectedRange.from} – ${selectedRange.to}<br>Selected range: <strong>${duration(sum(rangeLogs))} / ${duration(required)}</strong></div>
       <details class="monthly"><summary>Monthly progress</summary>${rangeMonths(selectedRange).map(({ month }) => {
@@ -1239,11 +1294,12 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
         ${dayLogs.map((w) => `<tr><td><input type="checkbox" aria-label="Select worklog ${escape(w.id)}" data-select="${escape(w.id)}" ${selected.has(w.id) ? "checked" : ""}></td><td class="nowrap">${escape(w.startTime.slice(0, 5))}–${endTime(w)}</td><td><a target="_blank" rel="noopener noreferrer" href="https://${location.hostname}/browse/${encodeURIComponent(issueKeys.get(w.issueId) || w.issueId)}">${escape(issueKeys.get(w.issueId) || `#${w.issueId}`)}</a>${aliasLabels(state, w)}${verbose ? `<p>${escape(w.description)}</p><small>#${escape(w.id)}</small>` : ""}</td><td>${duration(w.timeSpentSeconds)}</td><td>${button("delete", "Delete", w.id, "small danger")}</td></tr>`).join("")}</tbody>`;
         }).join("")}</table></div>${loaded && !rangeLogs.length ? '<p class="empty">No worklogs for this range.</p>' : ""}
       ${rangeLogs.length ? `<div class="actions">${button("delete-selected", "Delete selected", void 0, "small danger")}</div>` : ""}
-      <hr><h2>Log work</h2><form data-form="worklog">${field("logDate", "Worklog date", "", "date")}<div class="row">${field("issue", "Issue or alias", "NOVA-318", "text", currentIssue())}
-      ${button("current", "Use current issue", void 0, "small")}</div><div class="grid">${field("work", "Duration or interval", "1h20m or 09:40-11:00")}${field("start", "Start time (optional)", "09:40")}</div>
-      <label>Description<textarea name="description">${escape(drafts.description || "")}</textarea></label>${field("estimate", "Remaining estimate (optional)", "2h")}
+      </section><section class="log-editor" aria-label="Log work editor"><h2>Log work</h2><form data-form="worklog"><div class="grid">${field("logDate", "Worklog date", "", "date")}${field("work", "Duration or interval", "1h20m or 09:40-11:00")}</div>
+      <div class="row">${field("issue", "Issue or alias", "NOVA-318", "text", currentIssue())}${button("current", "Use current issue", void 0, "small")}</div>
       ${renderAttributes("work")}
-      <button class="primary wide" type="submit">Save worklog</button></form>`;
+      <label>Description<textarea name="description">${escape(drafts.description || "")}</textarea></label>
+      <details class="log-options" ${drafts.logOptions === "open" ? "open" : ""}><summary>More options</summary><div class="grid">${field("start", "Start time (optional)", "09:40")}${field("estimate", "Remaining estimate (optional)", "2h")}</div></details>
+      <button class="primary wide" type="submit">Save worklog</button></form></section></div>`;
       }
     }
     function aliasLabels(state, w) {

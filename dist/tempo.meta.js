@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tempo for Jira
 // @namespace    https://github.com/contione/tampermonkey-userscript
-// @version      0.1.5
+// @version      0.1.6
 // @description  Worklogs, schedules, aliases and persistent time trackers inside Jira Cloud.
 // @author       contione
 // @license      MIT
@@ -15,7 +15,7 @@
 // @grant        GM.setValue
 // @grant        GM_addValueChangeListener
 // @grant        GM_registerMenuCommand
-// @run-at       document-idle
+// @run-at       document-start
 // @noframes
 // @updateURL    https://raw.githubusercontent.com/contione/tampermonkey-userscript/main/dist/tempo.meta.js
 // @downloadURL  https://raw.githubusercontent.com/contione/tampermonkey-userscript/main/dist/tempo.user.js

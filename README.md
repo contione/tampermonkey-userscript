@@ -29,6 +29,8 @@ The panel grows with your browser window to give the worklog table more room. On
 
 On Chromium browsers, enable the userscript execution option requested by Tampermonkey (depending on the browser version, **Allow user scripts** or extension **Developer mode**). See [Tampermonkey's instructions](https://www.tampermonkey.net/faq.php) if the button does not appear. Refresh Jira after installing.
 
+Typing inside the Tempo panel is isolated from Jira's page shortcuts. Normal text editing, Tab navigation and IME input remain available; Escape closes the panel when you are not composing text or using a native date/select control. Updates from another Jira tab wait until you finish editing before refreshing the form, preserving your draft and cursor. Refresh Jira after updating the script so the shortcut protection is active from page startup.
+
 ## Connect your accounts
 
 Enter your Jira email, Jira API token and Tempo API token. The current Jira hostname is detected from the page; `/rest/api/3/myself` discovers your account ID automatically. Both Jira identity and Tempo schedule access are checked before saving.
@@ -48,6 +50,7 @@ Saved token fields remain blank. Leave them blank to keep existing tokens, or en
 - Choose **Custom**, pick **From** and **To** using the calendar controls, then select **Apply dates**. Both dates are inclusive.
 - The range summary shows logged and scheduled hours for the displayed dates. Expand **Monthly progress** for full-month totals, shown separately for every month touched by the range.
 - **Worklog date** in **Log work** is a separate calendar picker that defaults to today. Changing the list range does not change this date. Saving outside the displayed range shows a notice and keeps your current filter.
+- Click anywhere in a date field to open its calendar, including the custom range fields. On wide panels, the list and logging form sit side by side. On smaller screens, **Log work** jumps to the form. **More options** contains the optional start time and remaining estimate.
 - Log a duration such as `45m` or `1h20m`, or an interval such as `09:40-11:00`.
 - Add a description, optional start time and remaining estimate (`0h` is supported).
 - Use the current Jira issue, type an issue key, or use an alias.
