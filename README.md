@@ -25,7 +25,7 @@ The panel fills the available width and scrolls vertically to keep all controls 
 1. Install [Tampermonkey](https://www.tampermonkey.net/) from your browser's official extension store.
 2. Open the install link above and choose **Install** in Tampermonkey.
 3. Visit your Jira Cloud site, such as `https://your-team.atlassian.net`.
-4. Click the **Tempo** button in the bottom-right corner, then open **Settings**.
+4. Click the **Tempo** button halfway down the right edge of the page, then open **Settings**. It stays clear of Jira's Rovo button in the bottom-right corner.
 
 On Chromium browsers, enable the userscript execution option requested by Tampermonkey (depending on the browser version, **Allow user scripts** or extension **Developer mode**). See [Tampermonkey's instructions](https://www.tampermonkey.net/faq.php) if the button does not appear. Refresh Jira after installing.
 
