@@ -16,6 +16,7 @@
   const log = (id, issue, start, seconds, description) => ({ tempoWorklogId: id, issue: { id: issue }, author: { accountId: 'demo-account' }, startDate: fixed, startTime: start, timeSpentSeconds: seconds, description })
   window.__logs = [log(931842, 10001, '09:40:00', 4800, 'Investigated webhook retries'), log(931859, 10002, '13:00:00', 2700, 'Release checklist')]
   window.__requests = []
+  window.__attributes = []
   window.GM_xmlhttpRequest = options => {
     window.__requests.push({ method: options.method, url: options.url, data: options.data })
     const url = new URL(options.url)
@@ -25,9 +26,14 @@
       const issue = decodeURIComponent(url.pathname.split('/').pop())
       data = { id: issue === 'OPS-42' || issue === '10002' ? '10002' : '10001', key: issue === 'OPS-42' || issue === '10002' ? 'OPS-42' : 'NOVA-318' }
     } else if (url.pathname.includes('/user-schedule')) data = { results: [{ date: fixed, requiredSeconds: 28800, type: 'WORKING_DAY' }] }
+    else if (url.pathname === '/4/work-attributes') {
+      if (window.__failAttributes) { status = 403; data = { errors: { message: 'Attributes access denied' } } }
+      else data = { results: window.__attributes, metadata: {} }
+    }
     else if (options.method === 'POST') {
       const body = JSON.parse(options.data)
       if (window.__failPosts) { status = 400; data = { errors: { message: 'Simulated failure' } } }
+      else if (window.__attributes.some(attribute => attribute.required && !body.attributes?.some(value => value.key === attribute.key && value.value))) { status = 400; data = { errors: { message: 'Work attribute Task (Task) is required' } } }
       else { data = { ...body, tempoWorklogId: 940000 + window.__logs.length, issue: { id: body.issueId }, author: { accountId: body.authorAccountId } }; window.__logs.push(data) }
     } else if (options.method === 'DELETE') {
       const id = url.pathname.split('/').pop()

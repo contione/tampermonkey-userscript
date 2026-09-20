@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tempo for Jira
 // @namespace    https://github.com/contione/tampermonkey-userscript
-// @version      0.1.1
+// @version      0.1.2
 // @description  Worklogs, schedules, aliases and persistent time trackers inside Jira Cloud.
 // @author       contione
 // @license      MIT
@@ -241,6 +241,8 @@
         if (input.remainingEstimateSeconds !== void 0) {
           body.remainingEstimateSeconds = nonNegativeInteger(input.remainingEstimateSeconds, "remainingEstimateSeconds");
         }
+        const attributes = serializeWorkAttributeValues(input.attributes);
+        if (attributes.length > 0) body.attributes = attributes;
         const response = await tempoJson("/worklogs", config, transport, {
           method: "POST",
           body
@@ -272,6 +274,25 @@
           if (++pages > 100) throw new Error("Tempo pagination exceeded the safety limit.");
           const response = await tempoJson(pageUrl, config, transport);
           const page = parseWorklogPage(response.data);
+          results.push(...page.results);
+          next = resolveTempoNext(page.next, response.url);
+        }
+        return results;
+      }),
+      getWorkAttributes: () => execute("Tempo", async () => {
+        const url = tempoUrl("/work-attributes");
+        url.searchParams.set("limit", "1000");
+        const results = [];
+        const visited = /* @__PURE__ */ new Set();
+        let next = url;
+        let pages = 0;
+        while (next) {
+          const pageUrl = next.toString();
+          if (visited.has(pageUrl)) throw new Error("Tempo pagination loop detected.");
+          visited.add(pageUrl);
+          if (++pages > 100) throw new Error("Tempo pagination exceeded the safety limit.");
+          const response = await tempoJson(pageUrl, config, transport);
+          const page = parseWorkAttributePage(response.data);
           results.push(...page.results);
           next = resolveTempoNext(page.next, response.url);
         }
@@ -373,6 +394,43 @@
       ...typeof metadata?.next === "string" && metadata.next ? { next: metadata.next } : {}
     };
   }
+  function parseWorkAttributePage(value) {
+    if (!isRecord(value) || !isRecord(value.metadata) || !Array.isArray(value.results)) {
+      throw new Error("Tempo work attributes response is invalid.");
+    }
+    const metadata = value.metadata;
+    if (metadata.next !== void 0 && typeof metadata.next !== "string") {
+      throw new Error("Tempo pagination link is invalid.");
+    }
+    return {
+      results: value.results.map(parseWorkAttribute),
+      ...typeof metadata.next === "string" && metadata.next ? { next: metadata.next } : {}
+    };
+  }
+  function parseWorkAttribute(value) {
+    if (!isRecord(value) || typeof value.key !== "string" || !value.key.trim() || typeof value.name !== "string" || !value.name.trim() || typeof value.type !== "string" || !value.type.trim() || typeof value.required !== "boolean") {
+      throw new Error("Tempo work attribute is invalid.");
+    }
+    const attribute = {
+      key: value.key.trim(),
+      name: value.name.trim(),
+      type: value.type.trim(),
+      required: value.required
+    };
+    if (value.values !== void 0) {
+      if (!Array.isArray(value.values) || value.values.some((item) => typeof item !== "string")) {
+        throw new Error("Tempo work attribute values are invalid.");
+      }
+      attribute.values = value.values;
+    }
+    if (value.names !== void 0) {
+      if (!isRecord(value.names) || Object.values(value.names).some((item) => typeof item !== "string")) {
+        throw new Error("Tempo work attribute names are invalid.");
+      }
+      attribute.names = value.names;
+    }
+    return attribute;
+  }
   function parseWorklog(value) {
     if (!isRecord(value)) throw new Error("Tempo worklog response is invalid.");
     const issue = isRecord(value.issue) ? value.issue : void 0;
@@ -419,6 +477,23 @@
   function nonNegativeInteger(value, label) {
     if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return value;
     throw new Error(`${label} must be a non-negative integer.`);
+  }
+  function serializeWorkAttributeValues(values) {
+    if (values === void 0) return [];
+    if (!Array.isArray(values)) throw new Error("Worklog attributes are invalid.");
+    return values.flatMap((attribute, index) => {
+      if (!isRecord(attribute) || typeof attribute.key !== "string" || !attribute.key.trim()) {
+        throw new Error(`Worklog attribute ${index + 1} key is required.`);
+      }
+      const rawValue = attribute.value;
+      if (rawValue === void 0 || rawValue === null) return [];
+      if (typeof rawValue !== "string" && typeof rawValue !== "boolean" && (typeof rawValue !== "number" || !Number.isFinite(rawValue))) {
+        throw new Error(`Worklog attribute ${index + 1} value is invalid.`);
+      }
+      const value = String(rawValue);
+      if (!value.trim()) return [];
+      return [{ key: attribute.key.trim(), value }];
+    });
   }
   function finiteNumber(value) {
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -595,9 +670,9 @@
   var styles = `
 :host { all: initial; font: 14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color: #172b4d; color-scheme: light; }
 * { box-sizing: border-box; } [hidden] { display: none !important; }
-button,input,textarea { font: inherit; } button { cursor: pointer; border: 1px solid #ced7e3; border-radius: 5px; background: #f7f9fc; color: #172b4d; padding: 8px 12px; }
+button,input,textarea,select { font: inherit; } button { cursor: pointer; border: 1px solid #ced7e3; border-radius: 5px; background: #f7f9fc; color: #172b4d; padding: 8px 12px; }
 button:hover { background: #edf2f7; } button:disabled { cursor: wait; opacity: .6; }
-button:focus-visible,input:focus-visible,textarea:focus-visible,a:focus-visible { outline: 2px solid #0d9488; outline-offset: 2px; }
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible { outline: 2px solid #0d9488; outline-offset: 2px; }
 .launcher { position: fixed; right: 0; top: 50%; transform: translateY(-50%); background: #0d9488; color: white; border: 0; border-radius: 24px 0 0 24px; padding: 13px 18px; font-weight: 650; box-shadow: 0 6px 24px #172b4d33; }
 .launcher:hover,.primary:hover { background: #0b7b72; }
 .panel { position: fixed; top: 18px; right: 18px; bottom: 18px; width: 540px; max-width: calc(100vw - 36px); background: #fff; border: 1px solid #dce3ed; border-radius: 9px; box-shadow: 0 14px 65px #172b4d38; display: flex; flex-direction: column; overflow: hidden; }
@@ -609,7 +684,7 @@ nav button[aria-selected=true] { color: #0d9488; border-bottom-color: #0d9488; f
 main { padding: 12px 22px 20px; overflow-y: auto; overscroll-behavior: contain; flex: 1; }
 .status { margin: 0 22px 10px; padding: 9px 12px; border-radius: 5px; background: #e8f6f3; color: #156a54; white-space: pre-line; overflow-wrap: anywhere; } .status:empty { display: none; } .status.error { background: #fff0ed; color: #a73525; }
 .row { display: flex; gap: 10px; align-items: center; } .row > input,.row > label { flex: 1; min-width: 0; } .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; } .grid > label { min-width: 0; }
-label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 13px; } input,textarea { display: block; width: 100%; margin-top: 5px; border: 1px solid #bac7d8; border-radius: 4px; padding: 9px 11px; background: #fff; color: #172b4d; font-weight: 400; min-height: 40px; } input[type=checkbox] { display: inline; width: auto; min-height: 0; margin: 0 6px 0 0; } textarea { resize: vertical; min-height: 64px; } .check { font-weight: 400; }
+label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 13px; } input,textarea,select { display: block; width: 100%; margin-top: 5px; border: 1px solid #bac7d8; border-radius: 4px; padding: 9px 11px; background: #fff; color: #172b4d; font-weight: 400; min-height: 40px; } input[type=checkbox] { display: inline; width: auto; min-height: 0; margin: 0 6px 0 0; } textarea { resize: vertical; min-height: 64px; } .check { font-weight: 400; }
 .primary { background: #0d9488; border-color: #0d9488; color: white; font-weight: 600; } .wide { width: 100%; } .danger { color: #b42318; } .small { font-size: 12px; padding: 4px 8px; }
 .summary { margin: 10px 0 12px; line-height: 1.7; } .summary strong { font-variant-numeric: tabular-nums; }
 .table-wrap { overflow-x: auto; } table { border-collapse: collapse; width: 100%; font-size: 13px; } th { background: #f4f6fa; font-weight: 600; text-align: left; } th,td { padding: 10px 8px; border-bottom: 1px solid #dce3ed; vertical-align: top; } a { color: #1264a3; text-decoration: none; } a:hover { text-decoration: underline; } td p { margin: 4px 0; overflow-wrap: anywhere; font-size: 12px; } .nowrap { white-space: nowrap; } .empty { color: #62758d; padding: 20px 0; }
@@ -643,6 +718,8 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
     let selectedDate = resolveDate("");
     let logs = [];
     let schedule = [];
+    let workAttributes;
+    let attributeError = "";
     const issueKeys = /* @__PURE__ */ new Map();
     const selected = /* @__PURE__ */ new Set();
     const drafts = { date: selectedDate };
@@ -677,6 +754,9 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
       notice("");
       render();
       if (tab === "Worklogs" && !loaded && readState().credentials) void run(refresh);
+      else if (tab === "Trackers" && !workAttributes && readState().credentials) void run(async () => {
+        await loadAttributes();
+      });
     });
     main.addEventListener("input", (e) => {
       const input = e.target;
@@ -684,6 +764,7 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
     });
     main.addEventListener("change", (e) => {
       const input = e.target;
+      if (input.name && input.type !== "checkbox") drafts[input.name] = input.value;
       if (input.dataset.select) {
         if (input.checked) selected.add(input.dataset.select);
         else selected.delete(input.dataset.select);
@@ -736,13 +817,46 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
       if (state.credentials.hostname !== location.hostname) throw new Error("Credentials belong to a different Jira site. Connect this site in Settings.");
       return state.credentials;
     }
+    async function loadAttributes(api = createApi(credentials()), force = false) {
+      if (workAttributes && !force) return workAttributes;
+      try {
+        workAttributes = await api.getWorkAttributes();
+        attributeError = "";
+        return workAttributes;
+      } catch (error) {
+        workAttributes = void 0;
+        attributeError = error instanceof Error ? error.message : "Could not load work attributes.";
+        throw error;
+      }
+    }
+    async function attributeValues(api, prefix) {
+      const definitions = await loadAttributes(api);
+      const values = [];
+      for (const attribute of definitions) {
+        const value = (drafts[`${prefix}Attribute:${attribute.key}`] || "").trim();
+        if (!value) {
+          if (attribute.required) throw new Error(`${attribute.name} is required. Fill in Work attributes before logging time.`);
+          continue;
+        }
+        if (attribute.type === "STATIC_LIST" && !attribute.values?.includes(value)) throw new Error(`Choose a valid ${attribute.name} option.`);
+        if (attribute.type === "CHECKBOX" && value !== "true" && value !== "false") throw new Error(`Choose Yes or No for ${attribute.name}.`);
+        if (attribute.type === "INPUT_NUMERIC" && !Number.isFinite(Number(value))) throw new Error(`${attribute.name} must be a number.`);
+        values.push({ key: attribute.key, value });
+      }
+      return values;
+    }
+    function resetAttributes() {
+      workAttributes = void 0;
+      attributeError = "";
+      for (const key2 of Object.keys(drafts)) if (/^(work|stop)Attribute:/.test(key2)) delete drafts[key2];
+    }
     async function refresh() {
       const api = createApi(credentials());
       const date = resolveDate(drafts.date || "");
       const [year, month] = date.split("-").map(Number);
       const from = `${date.slice(0, 7)}-01`;
       const to = `${date.slice(0, 7)}-${new Date(year, month, 0).getDate()}`;
-      const [items, days] = await Promise.all([api.getWorklogs(from, to), api.getSchedule(from, to)]);
+      const [items, days] = await Promise.all([api.getWorklogs(from, to), api.getSchedule(from, to), loadAttributes(api, true).catch(() => void 0)]);
       const needed = [...new Set(items.filter((w) => w.startDate === date).map((w) => w.issueId))].filter((id) => !issueKeys.has(id));
       let cursor = 0;
       const workers = Array.from({ length: Math.min(4, needed.length) }, async () => {
@@ -786,6 +900,7 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
           logs = [];
           schedule = [];
           issueKeys.clear();
+          resetAttributes();
           notice(`Connected as ${identity.displayName || identity.accountId}.`);
         });
       } else if (name === "worklog") {
@@ -795,8 +910,9 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
           const parsed = parseWork(drafts.work || "", date, drafts.start);
           const remainingEstimateSeconds = parseEstimate(drafts.estimate || "");
           const api = createApi(credentials(state));
+          const attributes = await attributeValues(api, "work");
           const issueId = await api.getIssueId(issue);
-          const result = await api.addWorklog({ issueId, ...parsed, startDate: date, description: drafts.description || "", remainingEstimateSeconds });
+          const result = await api.addWorklog({ issueId, ...parsed, startDate: date, description: drafts.description || "", remainingEstimateSeconds, attributes });
           drafts.work = "";
           drafts.description = "";
           loaded = false;
@@ -846,8 +962,10 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
         return;
       }
       const api = createApi(credentials(state));
+      const attributes = await attributeValues(api, "stop");
       const issueId = await api.getIssueId(key2);
       let failed = 0;
+      let lastError = "";
       for (const interval of intervals) {
         try {
           await api.addWorklog({
@@ -856,23 +974,30 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
             startTime: interval.startTime,
             timeSpentSeconds: interval.timeSpentSeconds,
             description: drafts.stopDescription || tracker.description,
-            remainingEstimateSeconds: estimate
+            remainingEstimateSeconds: estimate,
+            attributes
           });
-        } catch {
+        } catch (error) {
           failed++;
+          lastError = error instanceof Error ? error.message : "Upload failed.";
           continue;
         }
         tracker.intervals = tracker.intervals.filter((i) => i.id !== interval.intervalId);
         await save();
       }
       loaded = false;
-      if (failed) throw new Error(`${failed} interval(s) failed and remain paused. Check Tempo before retrying if a request timed out.`);
+      if (failed) throw new Error(`${failed} interval(s) failed and remain paused. ${lastError} Check Tempo before retrying if a request timed out.`);
       delete state.trackers[key2];
       await save();
       notice(`Logged all intervals for ${key2}.`);
     }
     async function action(name, id) {
       if (name === "refresh") return refresh();
+      if (name === "attributes-refresh") {
+        await loadAttributes(createApi(credentials()), true);
+        notice("Work attributes refreshed.");
+        return;
+      }
       if (name === "current") {
         drafts.issue = currentIssue();
         notice(drafts.issue ? "Current issue selected." : "Open a Jira issue to use this shortcut.");
@@ -920,6 +1045,7 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
         logs = [];
         schedule = [];
         issueKeys.clear();
+        resetAttributes();
         notice("Credentials removed.");
         return;
       }
@@ -955,6 +1081,18 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
     function button(action2, text, id, style = "") {
       return `<button type="button" class="${style}" data-action="${action2}" ${id ? `data-id="${escape(id)}"` : ""}>${text}</button>`;
     }
+    function renderAttributes(prefix) {
+      if (!workAttributes) return `<p class="muted">${escape(attributeError || "Load Tempo work attributes before logging time.")}</p>${button("attributes-refresh", "Load work attributes", void 0, "small")}`;
+      if (!workAttributes.length) return "";
+      return `<h2>Work attributes</h2>${workAttributes.map((attribute) => {
+        const name = `${prefix}Attribute:${attribute.key}`;
+        const value = drafts[name] || "";
+        const label = `${escape(attribute.name)} (${attribute.required ? "required" : "optional"})`;
+        const options = attribute.type === "STATIC_LIST" ? (attribute.values || []).map((value2) => ({ value: value2, name: attribute.names?.[value2] || value2 })) : attribute.type === "CHECKBOX" ? [{ value: "true", name: "Yes" }, { value: "false", name: "No" }] : void 0;
+        if (options) return `<label>${label}<select name="${escape(name)}" aria-required="${attribute.required}"><option value="">Select...</option>${options.map((option) => `<option value="${escape(option.value)}" ${value === option.value ? "selected" : ""}>${escape(option.name)}</option>`).join("")}</select></label>`;
+        return `<label>${label}<input name="${escape(name)}" value="${escape(value)}" type="${attribute.type === "INPUT_NUMERIC" ? "number" : "text"}" step="any" aria-required="${attribute.required}" autocomplete="off" placeholder="${attribute.type === "ACCOUNT" ? "Tempo account key" : "Enter value"}"></label>`;
+      }).join("")}`;
+    }
     function render() {
       const state = readState();
       root.querySelectorAll("[data-tab]").forEach((b) => {
@@ -979,6 +1117,7 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
         main.innerHTML = `<p class="muted">Track locally. Stop to submit each work interval to Tempo.</p>
       ${Object.values(state.trackers).length ? Object.values(state.trackers).map((tracker) => renderTracker(tracker)).join("") : '<p class="empty">No trackers yet.</p>'}
       <h2>Stop options</h2>${field("stopDescription", "Override description (optional)")}${field("trackerEstimate", "Remaining estimate (optional)", "2h")}
+      ${renderAttributes("stop")}
       <hr><h2>Start a tracker</h2><form data-form="tracker">${field("trackerIssue", "Issue or alias", "NOVA-318", "text", currentIssue())}${field("trackerDescription", "Description")}
       <label class="check"><input type="checkbox" name="stopPrevious">Stop and log the previous tracker for this issue</label><button type="submit" class="primary wide">Start tracker</button></form>`;
       } else {
@@ -997,6 +1136,7 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
       <hr><h2>Log work</h2><form data-form="worklog"><div class="row">${field("issue", "Issue or alias", "NOVA-318", "text", currentIssue())}
       ${button("current", "Use current issue", void 0, "small")}</div><div class="grid">${field("work", "Duration or interval", "1h20m or 09:40-11:00")}${field("start", "Start time (optional)", "09:40")}</div>
       <label>Description<textarea name="description">${escape(drafts.description || "")}</textarea></label>${field("estimate", "Remaining estimate (optional)", "2h")}
+      ${renderAttributes("work")}
       <button class="primary wide" type="submit">Save worklog</button></form>`;
       }
     }

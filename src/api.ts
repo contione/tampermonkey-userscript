@@ -28,6 +28,20 @@ export type Worklog = {
     description: string
 }
 
+export type WorkAttribute = {
+    key: string
+    name: string
+    type: string
+    required: boolean
+    values?: string[]
+    names?: Record<string, string>
+}
+
+export type WorkAttributeValue = {
+    key: string
+    value: string
+}
+
 export type DaySchedule = {
     date: string
     requiredSeconds: number
@@ -41,6 +55,7 @@ export type AddWorklog = {
     startTime: string
     description?: string
     remainingEstimateSeconds?: number
+    attributes?: WorkAttributeValue[]
 }
 
 export type DiscoverAccountInput = {
@@ -56,6 +71,7 @@ export type TempoApi = {
     getWorklog(id: string): Promise<Worklog>
     deleteWorklog(id: string): Promise<void>
     getWorklogs(from: string, to: string): Promise<Worklog[]>
+    getWorkAttributes(): Promise<WorkAttribute[]>
     getSchedule(from: string, to: string): Promise<DaySchedule[]>
 }
 
@@ -120,6 +136,8 @@ export function createApi(credentials: Credentials, transport: Transport = gmTra
             if (input.remainingEstimateSeconds !== undefined) {
                 body.remainingEstimateSeconds = nonNegativeInteger(input.remainingEstimateSeconds, 'remainingEstimateSeconds')
             }
+            const attributes = serializeWorkAttributeValues(input.attributes)
+            if (attributes.length > 0) body.attributes = attributes
 
             const response = await tempoJson<unknown>('/worklogs', config, transport, {
                 method: 'POST',
@@ -157,6 +175,28 @@ export function createApi(credentials: Credentials, transport: Transport = gmTra
 
                 const response = await tempoJson<unknown>(pageUrl, config, transport)
                 const page = parseWorklogPage(response.data)
+                results.push(...page.results)
+                next = resolveTempoNext(page.next, response.url)
+            }
+            return results
+        }),
+
+        getWorkAttributes: () => execute('Tempo', async () => {
+            const url = tempoUrl('/work-attributes')
+            url.searchParams.set('limit', '1000')
+
+            const results: WorkAttribute[] = []
+            const visited = new Set<string>()
+            let next: URL | undefined = url
+            let pages = 0
+            while (next) {
+                const pageUrl = next.toString()
+                if (visited.has(pageUrl)) throw new Error('Tempo pagination loop detected.')
+                visited.add(pageUrl)
+                if (++pages > 100) throw new Error('Tempo pagination exceeded the safety limit.')
+
+                const response = await tempoJson<unknown>(pageUrl, config, transport)
+                const page = parseWorkAttributePage(response.data)
                 results.push(...page.results)
                 next = resolveTempoNext(page.next, response.url)
             }
@@ -287,6 +327,49 @@ function parseWorklogPage(value: unknown): { results: Worklog[]; next?: string }
     }
 }
 
+function parseWorkAttributePage(value: unknown): { results: WorkAttribute[]; next?: string } {
+    if (!isRecord(value) || !isRecord(value.metadata) || !Array.isArray(value.results)) {
+        throw new Error('Tempo work attributes response is invalid.')
+    }
+    const metadata = value.metadata
+    if (metadata.next !== undefined && typeof metadata.next !== 'string') {
+        throw new Error('Tempo pagination link is invalid.')
+    }
+    return {
+        results: value.results.map(parseWorkAttribute),
+        ...(typeof metadata.next === 'string' && metadata.next ? { next: metadata.next } : {})
+    }
+}
+
+function parseWorkAttribute(value: unknown): WorkAttribute {
+    if (!isRecord(value) || typeof value.key !== 'string' || !value.key.trim()
+        || typeof value.name !== 'string' || !value.name.trim()
+        || typeof value.type !== 'string' || !value.type.trim()
+        || typeof value.required !== 'boolean') {
+        throw new Error('Tempo work attribute is invalid.')
+    }
+
+    const attribute: WorkAttribute = {
+        key: value.key.trim(),
+        name: value.name.trim(),
+        type: value.type.trim(),
+        required: value.required
+    }
+    if (value.values !== undefined) {
+        if (!Array.isArray(value.values) || value.values.some(item => typeof item !== 'string')) {
+            throw new Error('Tempo work attribute values are invalid.')
+        }
+        attribute.values = value.values
+    }
+    if (value.names !== undefined) {
+        if (!isRecord(value.names) || Object.values(value.names).some(item => typeof item !== 'string')) {
+            throw new Error('Tempo work attribute names are invalid.')
+        }
+        attribute.names = value.names as Record<string, string>
+    }
+    return attribute
+}
+
 function parseWorklog(value: unknown): Worklog {
     if (!isRecord(value)) throw new Error('Tempo worklog response is invalid.')
     const issue = isRecord(value.issue) ? value.issue : undefined
@@ -337,6 +420,26 @@ function positiveInteger(value: unknown, label: string): number {
 function nonNegativeInteger(value: unknown, label: string): number {
     if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return value
     throw new Error(`${label} must be a non-negative integer.`)
+}
+
+function serializeWorkAttributeValues(values: WorkAttributeValue[] | undefined): WorkAttributeValue[] {
+    if (values === undefined) return []
+    if (!Array.isArray(values)) throw new Error('Worklog attributes are invalid.')
+
+    return values.flatMap((attribute, index) => {
+        if (!isRecord(attribute) || typeof attribute.key !== 'string' || !attribute.key.trim()) {
+            throw new Error(`Worklog attribute ${index + 1} key is required.`)
+        }
+        const rawValue = attribute.value
+        if (rawValue === undefined || rawValue === null) return []
+        if (typeof rawValue !== 'string' && typeof rawValue !== 'boolean'
+            && (typeof rawValue !== 'number' || !Number.isFinite(rawValue))) {
+            throw new Error(`Worklog attribute ${index + 1} value is invalid.`)
+        }
+        const value = String(rawValue)
+        if (!value.trim()) return []
+        return [{ key: attribute.key.trim(), value }]
+    })
 }
 
 function finiteNumber(value: unknown): number | undefined {

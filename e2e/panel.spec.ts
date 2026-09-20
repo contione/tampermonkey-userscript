@@ -124,3 +124,86 @@ test('batch deletion keeps failed IDs and still attempts the next item',async ({
   await expect(page.getByLabel('Select worklog 931842')).toBeVisible()
   await expect(page.getByLabel('Select worklog 931859')).toHaveCount(0)
 })
+
+test('required work attributes block writes and submit immutable dropdown values', async ({page}) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await launch(page)
+  await page.evaluate(() => {
+    (window as any).__attributes = [
+      { key: 'Task', name: 'Task', type: 'STATIC_LIST', required: true, values: ['task-dev-uid'], names: { 'task-dev-uid': 'Development <UI>' } },
+      { key: '_Billable_', name: 'Billable', type: 'CHECKBOX', required: true },
+      { key: '_Count_', name: 'Count', type: 'INPUT_NUMERIC', required: true }
+    ]
+  })
+  await page.getByRole('button', {name: 'Refresh', exact: true}).click()
+  await expect(page.getByLabel('Task (required)')).toBeVisible()
+  await page.getByLabel('Duration or interval', {exact: true}).fill('35m')
+  await page.getByRole('button', {name: 'Save worklog'}).click()
+  await expect(page.getByRole('status')).toContainText('Task is required')
+  expect(await page.evaluate(() => (window as any).__requests.filter((r: any) => r.method === 'POST').length)).toBe(0)
+  await expect(page.getByLabel('Duration or interval', {exact: true})).toHaveValue('35m')
+  await page.getByLabel('Task (required)').selectOption({label: 'Development <UI>'})
+  await page.getByLabel('Billable (required)').selectOption('false')
+  await page.getByLabel('Count (required)').fill('0')
+  await page.getByRole('tab', {name: 'Aliases', exact: true}).click()
+  await page.getByRole('tab', {name: 'Worklogs', exact: true}).click()
+  await expect(page.getByLabel('Task (required)')).toHaveValue('task-dev-uid')
+  if (process.env.TEMPO_QA_DIR) {
+    await page.getByRole('button', {name: 'Save worklog'}).scrollIntoViewIfNeeded()
+    await page.screenshot({path: `${process.env.TEMPO_QA_DIR}/work-attributes-desktop.png`})
+    await page.setViewportSize({width: 390, height: 844})
+    await page.getByRole('button', {name: 'Save worklog'}).scrollIntoViewIfNeeded()
+    await page.screenshot({path: `${process.env.TEMPO_QA_DIR}/work-attributes-mobile.png`})
+  }
+  await page.getByRole('button', {name: 'Save worklog'}).click()
+  await expect(page.getByRole('status')).toContainText('Saved 35m to NOVA-318')
+  const body = await page.evaluate(() => JSON.parse((window as any).__requests.find((r: any) => r.method === 'POST').data))
+  expect(body.attributes).toEqual([
+    {key: 'Task', value: 'task-dev-uid'}, {key: '_Billable_', value: 'false'}, {key: '_Count_', value: '0'}
+  ])
+  expect(errors).toEqual([])
+})
+
+test('failed attribute loading keeps worklogs readable and can retry without losing input', async ({page}) => {
+  await launch(page)
+  await page.evaluate(() => { (window as any).__failAttributes = true })
+  await page.getByRole('button', {name: 'Refresh', exact: true}).click()
+  await expect(page.getByRole('button', {name: 'Load work attributes'})).toBeVisible()
+  await expect(page.getByRole('link', {name: 'NOVA-318', exact: true})).toBeVisible()
+  await page.getByLabel('Duration or interval', {exact: true}).fill('20m')
+  await page.getByRole('button', {name: 'Save worklog'}).click()
+  await expect(page.getByRole('status')).toContainText('Unauthorized access to Tempo')
+  expect(await page.evaluate(() => (window as any).__requests.filter((r: any) => r.method === 'POST').length)).toBe(0)
+  await page.evaluate(() => {
+    (window as any).__failAttributes = false
+    ;(window as any).__attributes = [{key: 'Task', name: 'Task', type: 'INPUT_FIELD', required: true}]
+  })
+  await page.getByRole('button', {name: 'Load work attributes'}).click()
+  await expect(page.getByLabel('Task (required)')).toBeVisible()
+  await expect(page.getByLabel('Duration or interval', {exact: true})).toHaveValue('20m')
+  await page.getByLabel('Task (required)').fill('Investigation')
+  await page.getByRole('button', {name: 'Save worklog'}).click()
+  await expect(page.getByRole('status')).toContainText('Saved 20m')
+})
+
+test('tracker stop preserves intervals until required attributes are filled', async ({page}) => {
+  await launch(page)
+  await page.evaluate(() => {
+    (window as any).__attributes = [{key: 'Task', name: 'Task', type: 'INPUT_FIELD', required: true}]
+    const state = (window as any).GM_getValue('ignored', {})
+    state.trackers['NOVA-318'] = {issueKey: 'NOVA-318', description: 'Tracked work', activeSince: null, intervals: [{id: 'pending', start: Date.now() - 180000, end: Date.now() - 60000}]}
+    localStorage.setItem('fixture-state', JSON.stringify(state))
+  })
+  await page.getByRole('button', {name: 'Refresh', exact: true}).click()
+  await page.getByRole('tab', {name: 'Trackers', exact: true}).click()
+  await page.getByRole('button', {name: 'Stop & log'}).click()
+  await expect(page.getByRole('status')).toContainText('Task is required')
+  expect(await page.evaluate(() => (window as any).__requests.filter((r: any) => r.method === 'POST').length)).toBe(0)
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('fixture-state')!).trackers['NOVA-318'].intervals.length)).toBe(1)
+  await page.getByLabel('Task (required)').fill('Support')
+  await page.getByRole('button', {name: 'Stop & log'}).click()
+  await expect(page.getByRole('status')).toContainText('Logged all intervals')
+  const body = await page.evaluate(() => JSON.parse((window as any).__requests.find((r: any) => r.method === 'POST').data))
+  expect(body.attributes).toEqual([{key: 'Task', value: 'Support'}])
+})

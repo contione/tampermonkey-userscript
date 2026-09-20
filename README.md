@@ -48,9 +48,12 @@ Saved token fields remain blank. Leave them blank to keep existing tokens, or en
 - Log a duration such as `45m` or `1h20m`, or an interval such as `09:40-11:00`.
 - Add a description, optional start time and remaining estimate (`0h` is supported).
 - Use the current Jira issue, type an issue key, or use an alias.
+- Fill in **Work attributes** such as **Task (required)** when your Tempo site requires them. These fields are loaded from Tempo; dropdowns show the configured labels and submit their stored values.
 - Show descriptions and worklog IDs, delete one worklog, or select multiple rows to delete together. Deletions require confirmation.
 
 Issue links point back to your Jira site. If an issue cannot be read, its numeric ID remains visible instead of hiding the entire worklog list. Summary values are calculated from the API response, not sample data.
+
+If you see `Work attribute Task (Task) is required`, update the userscript and refresh Jira, then choose or enter **Task** under **Work attributes** before saving. This is a Tempo worklog field, separate from the Jira issue key. Required fields are checked before uploading. If attributes cannot be loaded, check that the Tempo token has permission to read work attributes and use **Load work attributes** to retry; existing worklogs can still be viewed. Attribute selections stay in the current panel only. Text, numeric, checkbox and static dropdown fields are supported; account fields accept a Tempo account key, and other field types accept their raw Tempo value.
 
 ## Trackers and aliases
 
@@ -59,6 +62,8 @@ Start, pause, resume, stop and discard trackers in **Trackers**. Trackers persis
 **Stop & log** uploads each saved interval of at least one minute. Successfully uploaded intervals are removed immediately; failed intervals remain paused. A later stop retries the remaining intervals. If a POST times out, check Tempo first: the server might have saved it even though the response was lost. Creation requests are never automatically retried.
 
 Use **Stop previous** to finish a tracker before starting another for the same issue. If an upload fails, the old tracker stays available and the new one is not started. Stop options can override the description and set a remaining estimate for each submitted interval.
+
+Choose any required work attributes under **Stop options** before **Stop & log** or **Stop previous**. The chosen values apply to each uploaded interval. Missing values leave the tracker intervals paused and available to retry.
 
 Aliases map a short name such as `review` to `NOVA-318`. They work in both worklog forms and trackers.
 

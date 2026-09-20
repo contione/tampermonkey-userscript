@@ -1,4 +1,4 @@
-import { createApi, discoverAccount, type Credentials, type DaySchedule, type Worklog } from './api'
+import { createApi, discoverAccount, type Credentials, type DaySchedule, type Worklog, type TempoApi, type WorkAttribute, type WorkAttributeValue } from './api'
 import { duration, parseEstimate, parseWork, pauseTracker, resolveDate, resolveIssue, resumeTracker, startTracker, trackerSeconds, trackerWorklogs, type Tracker } from './domain'
 import { readState, subscribe, transaction, type State } from './store'
 import { styles } from './styles'
@@ -30,6 +30,8 @@ function mount(): void {
   let selectedDate = resolveDate('')
   let logs: Worklog[] = []
   let schedule: DaySchedule[] = []
+  let workAttributes: WorkAttribute[] | undefined
+  let attributeError = ''
   const issueKeys = new Map<string, string>()
   const selected = new Set<string>()
   const drafts: Record<string, string> = { date: selectedDate }
@@ -59,6 +61,7 @@ function mount(): void {
     notice('')
     render()
     if (tab === 'Worklogs' && !loaded && readState().credentials) void run(refresh)
+    else if (tab === 'Trackers' && !workAttributes && readState().credentials) void run(async () => { await loadAttributes() })
   })
   main.addEventListener('input', e => {
     const input = e.target as HTMLInputElement
@@ -66,6 +69,7 @@ function mount(): void {
   })
   main.addEventListener('change', e => {
     const input = e.target as HTMLInputElement
+    if (input.name && input.type !== 'checkbox') drafts[input.name] = input.value
     if (input.dataset.select) {
       if (input.checked) selected.add(input.dataset.select)
       else selected.delete(input.dataset.select)
@@ -105,13 +109,45 @@ function mount(): void {
     if (state.credentials.hostname !== location.hostname) throw new Error('Credentials belong to a different Jira site. Connect this site in Settings.')
     return state.credentials
   }
+  async function loadAttributes(api: TempoApi = createApi(credentials()), force = false): Promise<WorkAttribute[]> {
+    if (workAttributes && !force) return workAttributes
+    try {
+      workAttributes = await api.getWorkAttributes()
+      attributeError = ''
+      return workAttributes
+    } catch (error) {
+      workAttributes = undefined
+      attributeError = error instanceof Error ? error.message : 'Could not load work attributes.'
+      throw error
+    }
+  }
+  async function attributeValues(api: TempoApi, prefix: string): Promise<WorkAttributeValue[]> {
+    const definitions = await loadAttributes(api)
+    const values: WorkAttributeValue[] = []
+    for (const attribute of definitions) {
+      const value = (drafts[`${prefix}Attribute:${attribute.key}`] || '').trim()
+      if (!value) {
+        if (attribute.required) throw new Error(`${attribute.name} is required. Fill in Work attributes before logging time.`)
+        continue
+      }
+      if (attribute.type === 'STATIC_LIST' && !attribute.values?.includes(value)) throw new Error(`Choose a valid ${attribute.name} option.`)
+      if (attribute.type === 'CHECKBOX' && value !== 'true' && value !== 'false') throw new Error(`Choose Yes or No for ${attribute.name}.`)
+      if (attribute.type === 'INPUT_NUMERIC' && !Number.isFinite(Number(value))) throw new Error(`${attribute.name} must be a number.`)
+      values.push({ key: attribute.key, value })
+    }
+    return values
+  }
+  function resetAttributes(): void {
+    workAttributes = undefined; attributeError = ''
+    for (const key of Object.keys(drafts)) if (/^(work|stop)Attribute:/.test(key)) delete drafts[key]
+  }
   async function refresh(): Promise<void> {
     const api = createApi(credentials())
     const date = resolveDate(drafts.date || '')
     const [year, month] = date.split('-').map(Number)
     const from = `${date.slice(0,7)}-01`
     const to = `${date.slice(0,7)}-${new Date(year, month, 0).getDate()}`
-    const [items, days] = await Promise.all([api.getWorklogs(from, to), api.getSchedule(from, to)])
+    const [items, days] = await Promise.all([api.getWorklogs(from, to), api.getSchedule(from, to), loadAttributes(api, true).catch(() => undefined)])
     const needed = [...new Set(items.filter(w => w.startDate === date).map(w => w.issueId))].filter(id => !issueKeys.has(id))
     let cursor = 0
     const workers = Array.from({length: Math.min(4, needed.length)}, async () => {
@@ -137,7 +173,7 @@ function mount(): void {
         await createApi(next).getSchedule(today, today)
         if (Object.keys(state.trackers).length && state.credentials?.accountId !== next.accountId) throw new Error('Finish or delete your local trackers before switching accounts.')
         state.credentials = next; await save()
-        drafts.jiraToken = ''; drafts.tempoToken = ''; loaded = false; logs = []; schedule = []; issueKeys.clear()
+        drafts.jiraToken = ''; drafts.tempoToken = ''; loaded = false; logs = []; schedule = []; issueKeys.clear(); resetAttributes()
         notice(`Connected as ${identity.displayName || identity.accountId}.`)
       })
     } else if (name === 'worklog') {
@@ -147,8 +183,9 @@ function mount(): void {
         const parsed = parseWork(drafts.work || '', date, drafts.start)
         const remainingEstimateSeconds = parseEstimate(drafts.estimate || '')
         const api = createApi(credentials(state))
+        const attributes = await attributeValues(api, 'work')
         const issueId = await api.getIssueId(issue)
-        const result = await api.addWorklog({ issueId, ...parsed, startDate: date, description: drafts.description || '', remainingEstimateSeconds })
+        const result = await api.addWorklog({ issueId, ...parsed, startDate: date, description: drafts.description || '', remainingEstimateSeconds, attributes })
         drafts.work = ''; drafts.description = ''; loaded = false
         notice(`Saved ${duration(parsed.timeSpentSeconds)} to ${issue}. Worklog #${result.id}.`)
       })
@@ -182,22 +219,25 @@ function mount(): void {
     const intervals = trackerWorklogs(tracker)
     if (!intervals.length) { delete state.trackers[key]; await save(); notice(`Removed ${key}: no intervals of at least one minute.`); return }
     const api = createApi(credentials(state))
+    const attributes = await attributeValues(api, 'stop')
     const issueId = await api.getIssueId(key)
     let failed = 0
+    let lastError = ''
     for (const interval of intervals) {
       try {
         await api.addWorklog({ issueId, startDate: interval.date, startTime: interval.startTime, timeSpentSeconds: interval.timeSpentSeconds,
-          description: drafts.stopDescription || tracker.description, remainingEstimateSeconds: estimate })
-      } catch { failed++; continue }
+          description: drafts.stopDescription || tracker.description, remainingEstimateSeconds: estimate, attributes })
+      } catch (error) { failed++; lastError = error instanceof Error ? error.message : 'Upload failed.'; continue }
       tracker.intervals = tracker.intervals.filter(i => i.id !== interval.intervalId)
       await save() // Stop on storage failure before uploading another interval.
     }
     loaded = false
-    if (failed) throw new Error(`${failed} interval(s) failed and remain paused. Check Tempo before retrying if a request timed out.`)
+    if (failed) throw new Error(`${failed} interval(s) failed and remain paused. ${lastError} Check Tempo before retrying if a request timed out.`)
     delete state.trackers[key]; await save(); notice(`Logged all intervals for ${key}.`)
   }
   async function action(name: string, id?: string): Promise<void> {
     if (name === 'refresh') return refresh()
+    if (name === 'attributes-refresh') { await loadAttributes(createApi(credentials()), true); notice('Work attributes refreshed.'); return }
     if (name === 'current') { drafts.issue = currentIssue(); notice(drafts.issue ? 'Current issue selected.' : 'Open a Jira issue to use this shortcut.'); return }
     if (name === 'delete' || name === 'delete-selected') {
       const ids = id ? [id] : [...selected]
@@ -215,7 +255,7 @@ function mount(): void {
     if (name === 'disconnect') {
       if (!window.confirm('Remove saved credentials for this Jira site? Aliases and trackers will be kept.')) { notice('Cancelled.'); return }
       await transaction(async (state, save) => { delete state.credentials; await save() })
-      drafts.email = ''; drafts.jiraToken = ''; drafts.tempoToken = ''; loaded = false; logs = []; schedule = []; issueKeys.clear(); notice('Credentials removed.'); return
+      drafts.email = ''; drafts.jiraToken = ''; drafts.tempoToken = ''; loaded = false; logs = []; schedule = []; issueKeys.clear(); resetAttributes(); notice('Credentials removed.'); return
     }
     await transaction(async (state, save) => {
       if (!id) return
@@ -239,6 +279,19 @@ function mount(): void {
   function button(action: string, text: string, id?: string, style = ''): string {
     return `<button type="button" class="${style}" data-action="${action}" ${id ? `data-id="${escape(id)}"` : ''}>${text}</button>`
   }
+  function renderAttributes(prefix: string): string {
+    if (!workAttributes) return `<p class="muted">${escape(attributeError || 'Load Tempo work attributes before logging time.')}</p>${button('attributes-refresh', 'Load work attributes', undefined, 'small')}`
+    if (!workAttributes.length) return ''
+    return `<h2>Work attributes</h2>${workAttributes.map(attribute => {
+      const name = `${prefix}Attribute:${attribute.key}`
+      const value = drafts[name] || ''
+      const label = `${escape(attribute.name)} (${attribute.required ? 'required' : 'optional'})`
+      const options = attribute.type === 'STATIC_LIST' ? (attribute.values || []).map(value => ({ value, name: attribute.names?.[value] || value }))
+        : attribute.type === 'CHECKBOX' ? [{ value: 'true', name: 'Yes' }, { value: 'false', name: 'No' }] : undefined
+      if (options) return `<label>${label}<select name="${escape(name)}" aria-required="${attribute.required}"><option value="">Select...</option>${options.map(option => `<option value="${escape(option.value)}" ${value === option.value ? 'selected' : ''}>${escape(option.name)}</option>`).join('')}</select></label>`
+      return `<label>${label}<input name="${escape(name)}" value="${escape(value)}" type="${attribute.type === 'INPUT_NUMERIC' ? 'number' : 'text'}" step="any" aria-required="${attribute.required}" autocomplete="off" placeholder="${attribute.type === 'ACCOUNT' ? 'Tempo account key' : 'Enter value'}"></label>`
+    }).join('')}`
+  }
   function render(): void {
     const state = readState()
     root.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(b => { b.setAttribute('aria-selected', String(b.dataset.tab === tab)); b.disabled = busy })
@@ -260,6 +313,7 @@ function mount(): void {
       main.innerHTML = `<p class="muted">Track locally. Stop to submit each work interval to Tempo.</p>
       ${Object.values(state.trackers).length ? Object.values(state.trackers).map(tracker => renderTracker(tracker)).join('') : '<p class="empty">No trackers yet.</p>'}
       <h2>Stop options</h2>${field('stopDescription','Override description (optional)')}${field('trackerEstimate','Remaining estimate (optional)','2h')}
+      ${renderAttributes('stop')}
       <hr><h2>Start a tracker</h2><form data-form="tracker">${field('trackerIssue','Issue or alias','NOVA-318','text',currentIssue())}${field('trackerDescription','Description')}
       <label class="check"><input type="checkbox" name="stopPrevious">Stop and log the previous tracker for this issue</label><button type="submit" class="primary wide">Start tracker</button></form>`
     } else {
@@ -278,6 +332,7 @@ function mount(): void {
       <hr><h2>Log work</h2><form data-form="worklog"><div class="row">${field('issue','Issue or alias','NOVA-318','text',currentIssue())}
       ${button('current','Use current issue',undefined,'small')}</div><div class="grid">${field('work','Duration or interval','1h20m or 09:40-11:00')}${field('start','Start time (optional)','09:40')}</div>
       <label>Description<textarea name="description">${escape(drafts.description || '')}</textarea></label>${field('estimate','Remaining estimate (optional)','2h')}
+      ${renderAttributes('work')}
       <button class="primary wide" type="submit">Save worklog</button></form>`
     }
   }

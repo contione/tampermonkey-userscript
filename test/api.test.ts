@@ -77,7 +77,12 @@ test('creates a worklog with integer issueId and string authorAccountId', async 
         startDate: '2026-09-20',
         startTime: '09:00:00',
         description: 'Build',
-        remainingEstimateSeconds: 600
+        remainingEstimateSeconds: 600,
+        attributes: [
+            { key: '_FLAG_', value: false as unknown as string },
+            { key: '_COUNT_', value: 0 as unknown as string },
+            { key: '_EMPTY_', value: '   ' }
+        ]
     })).resolves.toMatchObject({ id: '42', issueId: '10001' })
 
     const request = mock.calls[0]
@@ -91,7 +96,11 @@ test('creates a worklog with integer issueId and string authorAccountId', async 
         startDate: '2026-09-20',
         startTime: '09:00:00',
         description: 'Build',
-        remainingEstimateSeconds: 600
+        remainingEstimateSeconds: 600,
+        attributes: [
+            { key: '_FLAG_', value: 'false' },
+            { key: '_COUNT_', value: '0' }
+        ]
     })
 })
 
@@ -149,6 +158,52 @@ test('follows same-origin Tempo pagination', async () => {
     ])
     expect(mock.calls).toHaveLength(2)
     expect(mock.calls[1].headers.Authorization).toBe('Bearer tempo-token')
+})
+
+test('loads work attributes with values and names across same-origin pages', async () => {
+    const mock = queue(
+        json({
+            metadata: { next: 'https://api.tempo.io/4/work-attributes?offset=100&limit=1000' },
+            results: [{
+                key: '_Task_',
+                name: 'Task',
+                type: 'STATIC_LIST',
+                required: true,
+                values: ['build', 'review'],
+                names: { build: 'Build', review: 'Review' }
+            }]
+        }),
+        json({
+            metadata: {},
+            results: [{ key: '_Team_', name: 'Team', type: 'INPUT_FIELD', required: false }]
+        })
+    )
+    const api = createApi(credentials, mock.transport)
+
+    await expect(api.getWorkAttributes()).resolves.toEqual([
+        {
+            key: '_Task_',
+            name: 'Task',
+            type: 'STATIC_LIST',
+            required: true,
+            values: ['build', 'review'],
+            names: { build: 'Build', review: 'Review' }
+        },
+        { key: '_Team_', name: 'Team', type: 'INPUT_FIELD', required: false }
+    ])
+    expect(mock.calls[0].url).toBe('https://api.tempo.io/4/work-attributes?limit=1000')
+    expect(mock.calls[0].headers.Authorization).toBe('Bearer tempo-token')
+    expect(mock.calls[1].headers.Authorization).toBe('Bearer tempo-token')
+})
+
+test('rejects a cross-origin work attribute page link', async () => {
+    const mock = queue(json({
+        metadata: { next: 'https://attacker.example/collect' },
+        results: []
+    }))
+
+    await expect(createApi(credentials, mock.transport).getWorkAttributes()).rejects.toThrow('origin')
+    expect(mock.calls).toHaveLength(1)
 })
 
 test('rejects a cross-origin or looping Tempo next link', async () => {
