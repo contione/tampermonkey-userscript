@@ -16,7 +16,7 @@ View your recent worklogs grouped by date and schedule totals, then log time wit
 
 ### Narrow screens
 
-The panel fills the available width and scrolls vertically to keep all controls accessible.
+The panel grows with your browser window to give the worklog table more room. On narrow screens it fills the available width and scrolls vertically to keep all controls accessible.
 
 <img src="docs/images/mobile.png" alt="Tempo panel at a 390-pixel viewport, showing date range controls and daily worklog groups" width="390">
 
@@ -43,7 +43,7 @@ Saved token fields remain blank. Leave them blank to keep existing tokens, or en
 
 ## Worklogs
 
-- The list opens on **Last 7 days**, including today, with the newest date first and a total for each day.
+- The list opens on **Last 7 days**, including today, with the newest date first. Each daily heading shows the date, weekday and total logged time.
 - Choose **This week** or **Last week** for a Monday-to-Sunday range. Preset changes refresh the list automatically.
 - Choose **Custom**, pick **From** and **To** using the calendar controls, then select **Apply dates**. Both dates are inclusive.
 - The range summary shows logged and scheduled hours for the displayed dates. Expand **Monthly progress** for full-month totals, shown separately for every month touched by the range.

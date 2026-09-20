@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tempo for Jira
 // @namespace    https://github.com/contione/tampermonkey-userscript
-// @version      0.1.3
+// @version      0.1.4
 // @description  Worklogs, schedules, aliases and persistent time trackers inside Jira Cloud.
 // @author       contione
 // @license      MIT
@@ -675,7 +675,7 @@ button:hover { background: #edf2f7; } button:disabled { cursor: wait; opacity: .
 button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible { outline: 2px solid #0d9488; outline-offset: 2px; }
 .launcher { position: fixed; right: 0; top: 50%; transform: translateY(-50%); background: #0d9488; color: white; border: 0; border-radius: 24px 0 0 24px; padding: 13px 18px; font-weight: 650; box-shadow: 0 6px 24px #172b4d33; }
 .launcher:hover,.primary:hover { background: #0b7b72; }
-.panel { position: fixed; top: 18px; right: 18px; bottom: 18px; width: 540px; max-width: calc(100vw - 36px); background: #fff; border: 1px solid #dce3ed; border-radius: 9px; box-shadow: 0 14px 65px #172b4d38; display: flex; flex-direction: column; overflow: hidden; }
+.panel { position: fixed; top: 18px; right: 18px; bottom: 18px; width: clamp(640px, 56vw, 1040px); max-width: calc(100vw - 36px); background: #fff; border: 1px solid #dce3ed; border-radius: 9px; box-shadow: 0 14px 65px #172b4d38; display: flex; flex-direction: column; overflow: hidden; }
 header { padding: 16px 22px 12px; display: flex; justify-content: space-between; align-items: flex-start; }
 h1 { font-size: 23px; line-height: 1.3; margin: 0; letter-spacing: -.6px; } h2 { margin: 22px 0 14px; font-size: 18px; } p { margin: 4px 0 14px; } .muted,small { color: #62758d; } small { font-size: 12px; }
 .close { background: none; border: 0; font-size: 23px; padding: 0 3px; }
@@ -1222,7 +1222,8 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
       <div class="table-wrap"><table><thead><tr><th></th><th>Time</th><th>Issue</th><th>Duration</th><th></th></tr></thead>
       ${dates.map((date) => {
           const dayLogs = rangeLogs.filter((w) => w.startDate === date);
-          return `<tbody aria-label="Worklogs on ${date}"><tr class="day-heading"><th colspan="5" scope="rowgroup">${date} · ${duration(sum(dayLogs))}</th></tr>
+          const weekday = (/* @__PURE__ */ new Date(`${date}T12:00:00`)).toLocaleDateString("en", { weekday: "long" });
+          return `<tbody aria-label="Worklogs on ${escape(date)}"><tr class="day-heading"><th colspan="5" scope="rowgroup">${escape(date)} · ${weekday} · ${duration(sum(dayLogs))}</th></tr>
         ${dayLogs.map((w) => `<tr><td><input type="checkbox" aria-label="Select worklog ${escape(w.id)}" data-select="${escape(w.id)}" ${selected.has(w.id) ? "checked" : ""}></td><td class="nowrap">${escape(w.startTime.slice(0, 5))}–${endTime(w)}</td><td><a target="_blank" rel="noopener noreferrer" href="https://${location.hostname}/browse/${encodeURIComponent(issueKeys.get(w.issueId) || w.issueId)}">${escape(issueKeys.get(w.issueId) || `#${w.issueId}`)}</a>${aliasLabels(state, w)}${verbose ? `<p>${escape(w.description)}</p><small>#${escape(w.id)}</small>` : ""}</td><td>${duration(w.timeSpentSeconds)}</td><td>${button("delete", "Delete", w.id, "small danger")}</td></tr>`).join("")}</tbody>`;
         }).join("")}</table></div>${loaded && !rangeLogs.length ? '<p class="empty">No worklogs for this range.</p>' : ""}
       ${rangeLogs.length ? `<div class="actions">${button("delete-selected", "Delete selected", void 0, "small danger")}</div>` : ""}

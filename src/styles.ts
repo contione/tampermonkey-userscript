@@ -6,7 +6,7 @@ button:hover { background: #edf2f7; } button:disabled { cursor: wait; opacity: .
 button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible { outline: 2px solid #0d9488; outline-offset: 2px; }
 .launcher { position: fixed; right: 0; top: 50%; transform: translateY(-50%); background: #0d9488; color: white; border: 0; border-radius: 24px 0 0 24px; padding: 13px 18px; font-weight: 650; box-shadow: 0 6px 24px #172b4d33; }
 .launcher:hover,.primary:hover { background: #0b7b72; }
-.panel { position: fixed; top: 18px; right: 18px; bottom: 18px; width: 540px; max-width: calc(100vw - 36px); background: #fff; border: 1px solid #dce3ed; border-radius: 9px; box-shadow: 0 14px 65px #172b4d38; display: flex; flex-direction: column; overflow: hidden; }
+.panel { position: fixed; top: 18px; right: 18px; bottom: 18px; width: clamp(640px, 56vw, 1040px); max-width: calc(100vw - 36px); background: #fff; border: 1px solid #dce3ed; border-radius: 9px; box-shadow: 0 14px 65px #172b4d38; display: flex; flex-direction: column; overflow: hidden; }
 header { padding: 16px 22px 12px; display: flex; justify-content: space-between; align-items: flex-start; }
 h1 { font-size: 23px; line-height: 1.3; margin: 0; letter-spacing: -.6px; } h2 { margin: 22px 0 14px; font-size: 18px; } p { margin: 4px 0 14px; } .muted,small { color: #62758d; } small { font-size: 12px; }
 .close { background: none; border: 0; font-size: 23px; padding: 0 3px; }

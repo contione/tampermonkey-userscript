@@ -228,6 +228,9 @@ test('defaults to the last seven days, groups newest dates first and changes wee
   expect(await page.locator('tbody[aria-label]').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')))).toEqual([
     'Worklogs on 2026-09-20', 'Worklogs on 2026-09-19', 'Worklogs on 2026-09-14'
   ])
+  await expect(page.getByRole('rowheader', {name: '2026-09-20 · Sunday · 15m', exact: true})).toBeVisible()
+  await expect(page.getByRole('rowheader', {name: '2026-09-19 · Saturday · 2h5m', exact: true})).toBeVisible()
+  await expect(page.getByRole('rowheader', {name: '2026-09-14 · Monday · 30m', exact: true})).toBeVisible()
   await expect(page.getByLabel('Select worklog 941002')).toHaveCount(0)
   await expect(page.getByLabel('Select worklog 941004')).toHaveCount(0)
   if (process.env.TEMPO_QA_DIR) {
