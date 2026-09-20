@@ -52,6 +52,7 @@ Saved token fields remain blank. Leave them blank to keep existing tokens, or en
 - Add a description, optional start time and remaining estimate (`0h` is supported).
 - Use the current Jira issue, type an issue key, or use an alias.
 - Fill in **Work attributes** such as **Task (required)** when your Tempo site requires them. These fields are loaded from Tempo; dropdowns show the configured labels and submit their stored values.
+- When a static **Task** option has the exact label `Config/Coding/Dev/Testing - SW Development`, the Worklog and Stop forms select it by default. The default uses the immutable value returned by Tempo; choosing another option or a blank value is preserved after refresh. Sites without that label remain unselected.
 - Show descriptions and worklog IDs, delete one worklog, or select multiple rows to delete together. Deletions require confirmation.
 
 Issue links point back to your Jira site. If an issue cannot be read, its numeric ID remains visible instead of hiding the entire worklog list. Summary values are calculated from the API response, not sample data.

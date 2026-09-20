@@ -164,6 +164,82 @@ test('required work attributes block writes and submit immutable dropdown values
   expect(errors).toEqual([])
 })
 
+test('defaults the exact Task option, preserves manual choices across refresh, and submits its value', async ({page}) => {
+  await launch(page)
+  await page.evaluate(() => {
+    ;(window as any).__attributes = [{
+      key: '_Task_', name: 'Task', type: 'STATIC_LIST', required: true,
+      values: ['f052dce6-8bc3-4035-8cb8-0970299f61d4', 'other-task'],
+      names: {
+        'f052dce6-8bc3-4035-8cb8-0970299f61d4': 'Config/Coding/Dev/Testing - SW Development',
+        'other-task': 'Other task'
+      }
+    }]
+  })
+  await page.getByRole('button', {name: 'Refresh', exact: true}).click()
+  const task = page.getByLabel('Task (required)')
+  await expect(task).toHaveValue('f052dce6-8bc3-4035-8cb8-0970299f61d4')
+  await page.getByLabel('Duration or interval', {exact: true}).fill('35m')
+  await page.getByRole('button', {name: 'Save worklog'}).click()
+  await expect(page.getByRole('status')).toContainText('Saved 35m')
+  const firstBody = await page.evaluate(() => JSON.parse((window as any).__requests.find((r: any) => r.method === 'POST').data))
+  expect(firstBody.attributes).toEqual([{key: '_Task_', value: 'f052dce6-8bc3-4035-8cb8-0970299f61d4'}])
+
+  await page.getByLabel('Task (required)').selectOption('other-task')
+  await page.getByRole('button', {name: 'Refresh', exact: true}).click()
+  await expect(page.getByLabel('Task (required)')).toHaveValue('other-task')
+  await page.getByLabel('Task (required)').selectOption('')
+  await page.getByRole('button', {name: 'Refresh', exact: true}).click()
+  await expect(page.getByLabel('Task (required)')).toHaveValue('')
+})
+
+test('uses the Task default in tracker Stop options and submits the immutable value', async ({page}) => {
+  await launch(page)
+  await page.evaluate(() => {
+    ;(window as any).__attributes = [{
+      key: 'Task', name: 'Task', type: 'STATIC_LIST', required: true,
+      values: ['f052dce6-8bc3-4035-8cb8-0970299f61d4', 'other-task'],
+      names: {
+        'f052dce6-8bc3-4035-8cb8-0970299f61d4': 'Config/Coding/Dev/Testing - SW Development',
+        'other-task': 'Other task'
+      }
+    }]
+    const state = (window as any).GM_getValue('ignored', {})
+    state.trackers['NOVA-318'] = {issueKey: 'NOVA-318', description: 'Default Task', activeSince: null, intervals: [{id: 'default-task', start: Date.now() - 180000, end: Date.now() - 60000}]}
+    localStorage.setItem('fixture-state', JSON.stringify(state))
+  })
+  await page.getByRole('button', {name: 'Refresh', exact: true}).click()
+  await page.getByRole('tab', {name: 'Trackers', exact: true}).click()
+  await expect(page.getByLabel('Task (required)')).toHaveValue('f052dce6-8bc3-4035-8cb8-0970299f61d4')
+  await page.getByRole('button', {name: 'Stop & log'}).click()
+  await expect(page.getByRole('status')).toContainText('Logged all intervals')
+  const body = await page.evaluate(() => JSON.parse((window as any).__requests.find((r: any) => r.method === 'POST').data))
+  expect(body.attributes).toEqual([{key: 'Task', value: 'f052dce6-8bc3-4035-8cb8-0970299f61d4'}])
+  await page.getByLabel('Task (required)').selectOption('other-task')
+  await page.getByRole('tab', {name: 'Worklogs', exact: true}).click()
+  await expect(page.getByRole('status')).toContainText('Worklogs refreshed')
+  await page.getByRole('tab', {name: 'Trackers', exact: true}).click()
+  await expect(page.getByLabel('Task (required)')).toHaveValue('other-task')
+  await page.getByLabel('Task (required)').selectOption('')
+  await page.getByRole('tab', {name: 'Worklogs', exact: true}).click()
+  await page.getByRole('button', {name: 'Refresh', exact: true}).click()
+  await expect(page.getByRole('status')).toContainText('Worklogs refreshed')
+  await page.getByRole('tab', {name: 'Trackers', exact: true}).click()
+  await expect(page.getByLabel('Task (required)')).toHaveValue('')
+})
+
+test('does not select a different Task option when the default label is absent', async ({page}) => {
+  await launch(page)
+  await page.evaluate(() => {
+    ;(window as any).__attributes = [{
+      key: 'Task', name: 'Task', type: 'STATIC_LIST', required: true,
+      values: ['other-task'], names: {'other-task': 'Other task'}
+    }]
+  })
+  await page.getByRole('button', {name: 'Refresh', exact: true}).click()
+  await expect(page.getByLabel('Task (required)')).toHaveValue('')
+})
+
 test('failed attribute loading keeps worklogs readable and can retry without losing input', async ({page}) => {
   await launch(page)
   await page.evaluate(() => { (window as any).__failAttributes = true })

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tempo for Jira
 // @namespace    https://github.com/contione/tampermonkey-userscript
-// @version      0.1.4
+// @version      0.1.5
 // @description  Worklogs, schedules, aliases and persistent time trackers inside Jira Cloud.
 // @author       contione
 // @license      MIT
@@ -765,6 +765,7 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
   }
 
   // src/main.ts
+  var DEFAULT_TASK_LABEL = "Config/Coding/Dev/Testing - SW Development";
   if (!document.getElementById("tempo-userscript")) mount();
   function mount() {
     const host = document.createElement("div");
@@ -901,12 +902,23 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
       if (workAttributes && !force) return workAttributes;
       try {
         workAttributes = await api.getWorkAttributes();
+        applyDefaultTaskValues(workAttributes);
         attributeError = "";
         return workAttributes;
       } catch (error) {
         workAttributes = void 0;
         attributeError = error instanceof Error ? error.message : "Could not load work attributes.";
         throw error;
+      }
+    }
+    function applyDefaultTaskValues(attributes) {
+      const task = attributes.find((attribute) => attribute.type === "STATIC_LIST" && (attribute.key === "Task" || attribute.name === "Task"));
+      if (!task) return;
+      const defaultValue = task.values?.find((value) => (task.names?.[value] ?? value) === DEFAULT_TASK_LABEL);
+      if (defaultValue === void 0) return;
+      for (const prefix of ["work", "stop"]) {
+        const draftKey = `${prefix}Attribute:${task.key}`;
+        if (drafts[draftKey] === void 0) drafts[draftKey] = defaultValue;
       }
     }
     async function attributeValues(api, prefix) {

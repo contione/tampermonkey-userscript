@@ -6,6 +6,8 @@ import { resolveRange, rangeMonths, type RangePreset } from './dateRanges'
 
 declare function GM_registerMenuCommand(label: string, callback: () => void): void
 
+const DEFAULT_TASK_LABEL = 'Config/Coding/Dev/Testing - SW Development'
+
 if (!document.getElementById('tempo-userscript')) mount()
 
 function mount(): void {
@@ -119,12 +121,24 @@ function mount(): void {
     if (workAttributes && !force) return workAttributes
     try {
       workAttributes = await api.getWorkAttributes()
+      applyDefaultTaskValues(workAttributes)
       attributeError = ''
       return workAttributes
     } catch (error) {
       workAttributes = undefined
       attributeError = error instanceof Error ? error.message : 'Could not load work attributes.'
       throw error
+    }
+  }
+  function applyDefaultTaskValues(attributes: WorkAttribute[]): void {
+    const task = attributes.find(attribute => attribute.type === 'STATIC_LIST'
+      && (attribute.key === 'Task' || attribute.name === 'Task'))
+    if (!task) return
+    const defaultValue = task.values?.find(value => (task.names?.[value] ?? value) === DEFAULT_TASK_LABEL)
+    if (defaultValue === undefined) return
+    for (const prefix of ['work', 'stop']) {
+      const draftKey = `${prefix}Attribute:${task.key}`
+      if (drafts[draftKey] === undefined) drafts[draftKey] = defaultValue
     }
   }
   async function attributeValues(api: TempoApi, prefix: string): Promise<WorkAttributeValue[]> {
