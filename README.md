@@ -10,15 +10,15 @@ The actual userscript panel, shown with fictional Jira issues and sample worklog
 
 ### Desktop
 
-View your worklogs and schedule totals, then log time without leaving the current issue.
+View your recent worklogs grouped by date and schedule totals, then log time without leaving the current issue.
 
-![Tempo worklog panel beside a Jira demo issue, with monthly totals, worklog rows and the logging form](docs/images/desktop.png)
+![Tempo panel beside a Jira demo issue, showing the last seven days grouped by date and a separate worklog date picker](docs/images/desktop.png)
 
 ### Narrow screens
 
 The panel fills the available width and scrolls vertically to keep all controls accessible.
 
-<img src="docs/images/mobile.png" alt="Tempo panel at a 390-pixel viewport, showing worklogs and the time entry form" width="390">
+<img src="docs/images/mobile.png" alt="Tempo panel at a 390-pixel viewport, showing date range controls and daily worklog groups" width="390">
 
 ## Installation
 
@@ -43,8 +43,11 @@ Saved token fields remain blank. Leave them blank to keep existing tokens, or en
 
 ## Worklogs
 
-- Select a date, then **Refresh** to view daily worklogs and monthly schedule totals.
-- Dates accept `YYYY-MM-DD`, `today`, `yesterday`, `y`, `t-2`, and `today+1`.
+- The list opens on **Last 7 days**, including today, with the newest date first and a total for each day.
+- Choose **This week** or **Last week** for a Monday-to-Sunday range. Preset changes refresh the list automatically.
+- Choose **Custom**, pick **From** and **To** using the calendar controls, then select **Apply dates**. Both dates are inclusive.
+- The range summary shows logged and scheduled hours for the displayed dates. Expand **Monthly progress** for full-month totals, shown separately for every month touched by the range.
+- **Worklog date** in **Log work** is a separate calendar picker that defaults to today. Changing the list range does not change this date. Saving outside the displayed range shows a notice and keeps your current filter.
 - Log a duration such as `45m` or `1h20m`, or an interval such as `09:40-11:00`.
 - Add a description, optional start time and remaining estimate (`0h` is supported).
 - Use the current Jira issue, type an issue key, or use an alias.

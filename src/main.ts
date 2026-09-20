@@ -2,6 +2,7 @@ import { createApi, discoverAccount, type Credentials, type DaySchedule, type Wo
 import { duration, parseEstimate, parseWork, pauseTracker, resolveDate, resolveIssue, resumeTracker, startTracker, trackerSeconds, trackerWorklogs, type Tracker } from './domain'
 import { readState, subscribe, transaction, type State } from './store'
 import { styles } from './styles'
+import { resolveRange, rangeMonths, type RangePreset } from './dateRanges'
 
 declare function GM_registerMenuCommand(label: string, callback: () => void): void
 
@@ -27,14 +28,14 @@ function mount(): void {
   let tab = readState().credentials ? 'Worklogs' : 'Settings'
   let busy = false
   let loaded = false
-  let selectedDate = resolveDate('')
+  let selectedRange = resolveRange('recent')
   let logs: Worklog[] = []
   let schedule: DaySchedule[] = []
   let workAttributes: WorkAttribute[] | undefined
   let attributeError = ''
   const issueKeys = new Map<string, string>()
   const selected = new Set<string>()
-  const drafts: Record<string, string> = { date: selectedDate }
+  const drafts: Record<string, string> = { range: 'recent', from: selectedRange.from, to: selectedRange.to, logDate: resolveDate('') }
   let verbose = false
 
   function notice(message: string, error = false): void {
@@ -70,6 +71,11 @@ function mount(): void {
   main.addEventListener('change', e => {
     const input = e.target as HTMLInputElement
     if (input.name && input.type !== 'checkbox') drafts[input.name] = input.value
+    if (input.name === 'range') {
+      if (input.value === 'custom') { drafts.from = selectedRange.from; drafts.to = selectedRange.to; render() }
+      else void run(refresh)
+      return
+    }
     if (input.dataset.select) {
       if (input.checked) selected.add(input.dataset.select)
       else selected.delete(input.dataset.select)
@@ -99,7 +105,7 @@ function mount(): void {
     if (busy) return
     busy = true
     notice('Working…')
-    root.querySelectorAll<HTMLButtonElement>('main button, nav button').forEach(b => { b.disabled = true })
+    root.querySelectorAll<HTMLInputElement>('main button, main input, main select, main textarea, nav button').forEach(b => { b.disabled = true })
     main.setAttribute('aria-busy', 'true')
     try { await task() } catch (error) { notice(error instanceof Error ? error.message : 'Something went wrong.', true) }
     finally { busy = false; render(); main.removeAttribute('aria-busy') }
@@ -143,12 +149,12 @@ function mount(): void {
   }
   async function refresh(): Promise<void> {
     const api = createApi(credentials())
-    const date = resolveDate(drafts.date || '')
-    const [year, month] = date.split('-').map(Number)
-    const from = `${date.slice(0,7)}-01`
-    const to = `${date.slice(0,7)}-${new Date(year, month, 0).getDate()}`
+    const range = resolveRange(drafts.range as RangePreset, drafts.from, drafts.to)
+    const months = rangeMonths(range)
+    const from = months[0].from
+    const to = months[months.length - 1].to
     const [items, days] = await Promise.all([api.getWorklogs(from, to), api.getSchedule(from, to), loadAttributes(api, true).catch(() => undefined)])
-    const needed = [...new Set(items.filter(w => w.startDate === date).map(w => w.issueId))].filter(id => !issueKeys.has(id))
+    const needed = [...new Set(items.filter(w => w.startDate >= range.from && w.startDate <= range.to).map(w => w.issueId))].filter(id => !issueKeys.has(id))
     let cursor = 0
     const workers = Array.from({length: Math.min(4, needed.length)}, async () => {
       while (cursor < needed.length) {
@@ -157,10 +163,11 @@ function mount(): void {
       }
     })
     await Promise.all(workers)
-    logs = items; schedule = days; selectedDate = date; drafts.date = date; loaded = true; selected.clear()
+    logs = items; schedule = days; selectedRange = range; loaded = true; selected.clear()
     notice('Worklogs refreshed.')
   }
   async function submit(name: string): Promise<void> {
+    if (name === 'range') return refresh()
     if (name === 'settings') {
       await transaction(async (state, save) => {
         const input = { hostname: location.hostname, email: drafts.email?.trim() || state.credentials?.email || '',
@@ -179,7 +186,8 @@ function mount(): void {
     } else if (name === 'worklog') {
       await transaction(async (state) => {
         const issue = resolveIssue(drafts.issue || '', state.aliases)
-        const date = resolveDate(drafts.date || '')
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(drafts.logDate || '')) throw new Error('Choose a worklog date.')
+        const date = resolveDate(drafts.logDate)
         const parsed = parseWork(drafts.work || '', date, drafts.start)
         const remainingEstimateSeconds = parseEstimate(drafts.estimate || '')
         const api = createApi(credentials(state))
@@ -187,7 +195,8 @@ function mount(): void {
         const issueId = await api.getIssueId(issue)
         const result = await api.addWorklog({ issueId, ...parsed, startDate: date, description: drafts.description || '', remainingEstimateSeconds, attributes })
         drafts.work = ''; drafts.description = ''; loaded = false
-        notice(`Saved ${duration(parsed.timeSpentSeconds)} to ${issue}. Worklog #${result.id}.`)
+        const outsideRange = date < selectedRange.from || date > selectedRange.to
+        notice(`Saved ${duration(parsed.timeSpentSeconds)} to ${issue} on ${date}. Worklog #${result.id}.${outsideRange ? ' This date is outside the displayed range.' : ''}`)
       })
       const message = status.textContent!
       try { await refresh(); notice(message) } catch { notice(`${message} Refresh failed; try Refresh before submitting again.`) }
@@ -317,19 +326,31 @@ function mount(): void {
       <hr><h2>Start a tracker</h2><form data-form="tracker">${field('trackerIssue','Issue or alias','NOVA-318','text',currentIssue())}${field('trackerDescription','Description')}
       <label class="check"><input type="checkbox" name="stopPrevious">Stop and log the previous tracker for this issue</label><button type="submit" class="primary wide">Start tracker</button></form>`
     } else {
-      const dayLogs = logs.filter(w => w.startDate === selectedDate).sort((a,b) => a.startTime.localeCompare(b.startTime))
+      const rangeLogs = logs.filter(w => w.startDate >= selectedRange.from && w.startDate <= selectedRange.to)
+        .sort((a,b) => b.startDate.localeCompare(a.startDate) || a.startTime.localeCompare(b.startTime))
+      const dates = [...new Set(rangeLogs.map(w => w.startDate))]
       const sum = (items: Worklog[]) => items.reduce((n,w) => n + w.timeSpentSeconds, 0)
-      const required = schedule.reduce((n,d) => n + d.requiredSeconds, 0)
+      const required = schedule.filter(d => d.date >= selectedRange.from && d.date <= selectedRange.to).reduce((n,d) => n + d.requiredSeconds, 0)
       const today = resolveDate('')
-      const delta = sum(logs) - schedule.filter(d => d.date <= today).reduce((n,d) => n+d.requiredSeconds,0)
-      main.innerHTML = `<div class="row"><input aria-label="Worklog date" name="date" value="${escape(drafts.date)}" placeholder="YYYY-MM-DD or yesterday">${button('refresh','Refresh')}</div>
-      ${loaded ? `<div class="summary">Month ${selectedDate.slice(0,7)}: <strong>${duration(sum(logs))} / ${duration(required)}</strong> <span class="muted">(${delta >= 0 ? '+' : ''}${duration(delta)})</span><br>Selected day: <strong>${duration(sum(dayLogs))} / ${duration(schedule.find(d => d.date === selectedDate)?.requiredSeconds || 0)}</strong></div>` : '<p class="empty">Connect in Settings, then refresh your worklogs.</p>'}
+      main.innerHTML = `<div class="row range-controls"><label>Date range<select name="range">${[['recent','Last 7 days'],['week','This week'],['previous','Last week'],['custom','Custom']].map(([value,label]) => `<option value="${value}" ${drafts.range === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>${button('refresh','Refresh')}</div>
+      ${drafts.range === 'custom' ? `<form data-form="range"><div class="grid">${field('from','From','','date')}${field('to','To','','date')}</div><button type="submit" class="small primary">Apply dates</button></form>` : ''}
+      ${loaded ? `<div class="summary" aria-label="Range summary">${selectedRange.from} – ${selectedRange.to}<br>Selected range: <strong>${duration(sum(rangeLogs))} / ${duration(required)}</strong></div>
+      <details class="monthly"><summary>Monthly progress</summary>${rangeMonths(selectedRange).map(({month}) => {
+        const logged = sum(logs.filter(w => w.startDate.startsWith(month)))
+        const monthDays = schedule.filter(d => d.date.startsWith(month))
+        const required = monthDays.reduce((n,d) => n + d.requiredSeconds, 0)
+        const delta = logged - monthDays.filter(d => d.date <= today).reduce((n,d) => n + d.requiredSeconds, 0)
+        return `<p>${month}: <strong>${duration(logged)} / ${duration(required)}</strong> <span class="muted">(${delta >= 0 ? '+' : ''}${duration(delta)})</span></p>`
+      }).join('')}</details>` : '<p class="empty">Connect in Settings, then refresh your worklogs.</p>'}
       <label class="check"><input type="checkbox" name="verbose" ${verbose ? 'checked' : ''}>Show descriptions & worklog IDs</label>
-      <div class="table-wrap"><table><thead><tr><th></th><th>Time</th><th>Issue</th><th>Duration</th><th></th></tr></thead><tbody>
-      ${dayLogs.map(w => `<tr><td><input type="checkbox" aria-label="Select worklog ${escape(w.id)}" data-select="${escape(w.id)}" ${selected.has(w.id) ? 'checked' : ''}></td><td class="nowrap">${escape(w.startTime.slice(0,5))}–${endTime(w)}</td><td><a target="_blank" rel="noopener noreferrer" href="https://${location.hostname}/browse/${encodeURIComponent(issueKeys.get(w.issueId) || w.issueId)}">${escape(issueKeys.get(w.issueId) || `#${w.issueId}`)}</a>${aliasLabels(state,w)}${verbose ? `<p>${escape(w.description)}</p><small>#${escape(w.id)}</small>` : ''}</td><td>${duration(w.timeSpentSeconds)}</td><td>${button('delete','Delete',w.id,'small danger')}</td></tr>`).join('')}
-      </tbody></table></div>${loaded && !dayLogs.length ? '<p class="empty">No worklogs for this day.</p>' : ''}
-      ${dayLogs.length ? `<div class="actions">${button('delete-selected','Delete selected',undefined,'small danger')}</div>` : ''}
-      <hr><h2>Log work</h2><form data-form="worklog"><div class="row">${field('issue','Issue or alias','NOVA-318','text',currentIssue())}
+      <div class="table-wrap"><table><thead><tr><th></th><th>Time</th><th>Issue</th><th>Duration</th><th></th></tr></thead>
+      ${dates.map(date => {
+        const dayLogs = rangeLogs.filter(w => w.startDate === date)
+        return `<tbody aria-label="Worklogs on ${date}"><tr class="day-heading"><th colspan="5" scope="rowgroup">${date} · ${duration(sum(dayLogs))}</th></tr>
+        ${dayLogs.map(w => `<tr><td><input type="checkbox" aria-label="Select worklog ${escape(w.id)}" data-select="${escape(w.id)}" ${selected.has(w.id) ? 'checked' : ''}></td><td class="nowrap">${escape(w.startTime.slice(0,5))}–${endTime(w)}</td><td><a target="_blank" rel="noopener noreferrer" href="https://${location.hostname}/browse/${encodeURIComponent(issueKeys.get(w.issueId) || w.issueId)}">${escape(issueKeys.get(w.issueId) || `#${w.issueId}`)}</a>${aliasLabels(state,w)}${verbose ? `<p>${escape(w.description)}</p><small>#${escape(w.id)}</small>` : ''}</td><td>${duration(w.timeSpentSeconds)}</td><td>${button('delete','Delete',w.id,'small danger')}</td></tr>`).join('')}</tbody>`
+      }).join('')}</table></div>${loaded && !rangeLogs.length ? '<p class="empty">No worklogs for this range.</p>' : ''}
+      ${rangeLogs.length ? `<div class="actions">${button('delete-selected','Delete selected',undefined,'small danger')}</div>` : ''}
+      <hr><h2>Log work</h2><form data-form="worklog">${field('logDate','Worklog date','','date')}<div class="row">${field('issue','Issue or alias','NOVA-318','text',currentIssue())}
       ${button('current','Use current issue',undefined,'small')}</div><div class="grid">${field('work','Duration or interval','1h20m or 09:40-11:00')}${field('start','Start time (optional)','09:40')}</div>
       <label>Description<textarea name="description">${escape(drafts.description || '')}</textarea></label>${field('estimate','Remaining estimate (optional)','2h')}
       ${renderAttributes('work')}

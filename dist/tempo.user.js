@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tempo for Jira
 // @namespace    https://github.com/contione/tampermonkey-userscript
-// @version      0.1.2
+// @version      0.1.3
 // @description  Worklogs, schedules, aliases and persistent time trackers inside Jira Cloud.
 // @author       contione
 // @license      MIT
@@ -687,10 +687,82 @@ main { padding: 12px 22px 20px; overflow-y: auto; overscroll-behavior: contain; 
 label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 13px; } input,textarea,select { display: block; width: 100%; margin-top: 5px; border: 1px solid #bac7d8; border-radius: 4px; padding: 9px 11px; background: #fff; color: #172b4d; font-weight: 400; min-height: 40px; } input[type=checkbox] { display: inline; width: auto; min-height: 0; margin: 0 6px 0 0; } textarea { resize: vertical; min-height: 64px; } .check { font-weight: 400; }
 .primary { background: #0d9488; border-color: #0d9488; color: white; font-weight: 600; } .wide { width: 100%; } .danger { color: #b42318; } .small { font-size: 12px; padding: 4px 8px; }
 .summary { margin: 10px 0 12px; line-height: 1.7; } .summary strong { font-variant-numeric: tabular-nums; }
+.range-controls { align-items: flex-end; margin-bottom: 12px; } .range-controls label { margin-bottom: 0; } .range-controls select { margin-top: 5px; } .monthly { margin: 0 0 14px; } .monthly p { margin: 6px 0; } .day-heading th { background: #edf6f5; color: #156a54; }
 .table-wrap { overflow-x: auto; } table { border-collapse: collapse; width: 100%; font-size: 13px; } th { background: #f4f6fa; font-weight: 600; text-align: left; } th,td { padding: 10px 8px; border-bottom: 1px solid #dce3ed; vertical-align: top; } a { color: #1264a3; text-decoration: none; } a:hover { text-decoration: underline; } td p { margin: 4px 0; overflow-wrap: anywhere; font-size: 12px; } .nowrap { white-space: nowrap; } .empty { color: #62758d; padding: 20px 0; }
 hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; } .tracker { padding: 15px 0; border-bottom: 1px solid #dce3ed; } .tracker-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; } .tracker-title strong { font-size: 16px; } details { margin-top: 8px; } summary { cursor: pointer; color: #62758d; }
 @media(max-width: 560px) { .panel { inset: 0; width: 100%; max-width: 100%; border-radius: 0; } header { padding: 16px; } nav { padding: 0 12px; } main { padding: 16px; } .status { margin: 0 16px 8px; } .grid { gap: 10px; } th,td { padding: 8px 5px; } }
 `;
+
+  // src/dateRanges.ts
+  var DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+  function formatDate(date) {
+    return `${String(date.getFullYear()).padStart(4, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+  function parseDate(value) {
+    const match = DATE_PATTERN.exec(value);
+    if (!match) throw new Error("Use YYYY-MM-DD for custom dates.");
+    const date = /* @__PURE__ */ new Date(0);
+    date.setHours(12, 0, 0, 0);
+    date.setFullYear(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    if (formatDate(date) !== value) throw new Error("Enter valid custom dates.");
+    return date;
+  }
+  function localDate(date) {
+    const result = /* @__PURE__ */ new Date(0);
+    result.setHours(12, 0, 0, 0);
+    result.setFullYear(date.getFullYear(), date.getMonth(), date.getDate());
+    return result;
+  }
+  function shiftDays(date, days) {
+    const result = new Date(date);
+    result.setDate(result.getDate() + days);
+    return result;
+  }
+  function mondayOfWeek(date) {
+    const mondayOffset = (date.getDay() + 6) % 7;
+    return shiftDays(date, -mondayOffset);
+  }
+  function customRange(from, to) {
+    if (!from || !to) throw new Error("Choose both custom start and end dates.");
+    const start = parseDate(from);
+    const end = parseDate(to);
+    if (from > to) throw new Error("Custom start date must be on or before the end date.");
+    return { from: formatDate(start), to: formatDate(end) };
+  }
+  function resolveRange(preset, from, to, now = /* @__PURE__ */ new Date()) {
+    if (preset === "custom") return customRange(from, to);
+    const today = localDate(now);
+    if (preset === "recent") {
+      return { from: formatDate(shiftDays(today, -6)), to: formatDate(today) };
+    }
+    if (preset === "week" || preset === "previous") {
+      const currentMonday = mondayOfWeek(today);
+      const start = preset === "previous" ? shiftDays(currentMonday, -7) : currentMonday;
+      return { from: formatDate(start), to: formatDate(shiftDays(start, 6)) };
+    }
+    throw new Error(`Unknown range preset: ${preset}`);
+  }
+  function rangeMonths(range) {
+    const start = parseDate(range.from);
+    const end = parseDate(range.to);
+    if (range.from > range.to) throw new Error("Range start date must be on or before the end date.");
+    const cursor = new Date(start);
+    cursor.setDate(1);
+    const months = [];
+    while (cursor.getTime() <= end.getTime()) {
+      const monthStart = new Date(cursor);
+      const monthEnd = new Date(cursor);
+      monthEnd.setMonth(monthEnd.getMonth() + 1);
+      monthEnd.setDate(0);
+      months.push({
+        month: `${String(cursor.getFullYear()).padStart(4, "0")}-${String(cursor.getMonth() + 1).padStart(2, "0")}`,
+        from: formatDate(monthStart),
+        to: formatDate(monthEnd)
+      });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return months;
+  }
 
   // src/main.ts
   if (!document.getElementById("tempo-userscript")) mount();
@@ -715,14 +787,14 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
     let tab = readState().credentials ? "Worklogs" : "Settings";
     let busy = false;
     let loaded = false;
-    let selectedDate = resolveDate("");
+    let selectedRange = resolveRange("recent");
     let logs = [];
     let schedule = [];
     let workAttributes;
     let attributeError = "";
     const issueKeys = /* @__PURE__ */ new Map();
     const selected = /* @__PURE__ */ new Set();
-    const drafts = { date: selectedDate };
+    const drafts = { range: "recent", from: selectedRange.from, to: selectedRange.to, logDate: resolveDate("") };
     let verbose = false;
     function notice(message, error = false) {
       status.textContent = message;
@@ -765,6 +837,14 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
     main.addEventListener("change", (e) => {
       const input = e.target;
       if (input.name && input.type !== "checkbox") drafts[input.name] = input.value;
+      if (input.name === "range") {
+        if (input.value === "custom") {
+          drafts.from = selectedRange.from;
+          drafts.to = selectedRange.to;
+          render();
+        } else void run(refresh);
+        return;
+      }
       if (input.dataset.select) {
         if (input.checked) selected.add(input.dataset.select);
         else selected.delete(input.dataset.select);
@@ -798,7 +878,7 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
       if (busy) return;
       busy = true;
       notice("Working…");
-      root.querySelectorAll("main button, nav button").forEach((b) => {
+      root.querySelectorAll("main button, main input, main select, main textarea, nav button").forEach((b) => {
         b.disabled = true;
       });
       main.setAttribute("aria-busy", "true");
@@ -852,12 +932,12 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
     }
     async function refresh() {
       const api = createApi(credentials());
-      const date = resolveDate(drafts.date || "");
-      const [year, month] = date.split("-").map(Number);
-      const from = `${date.slice(0, 7)}-01`;
-      const to = `${date.slice(0, 7)}-${new Date(year, month, 0).getDate()}`;
+      const range = resolveRange(drafts.range, drafts.from, drafts.to);
+      const months = rangeMonths(range);
+      const from = months[0].from;
+      const to = months[months.length - 1].to;
       const [items, days] = await Promise.all([api.getWorklogs(from, to), api.getSchedule(from, to), loadAttributes(api, true).catch(() => void 0)]);
-      const needed = [...new Set(items.filter((w) => w.startDate === date).map((w) => w.issueId))].filter((id) => !issueKeys.has(id));
+      const needed = [...new Set(items.filter((w) => w.startDate >= range.from && w.startDate <= range.to).map((w) => w.issueId))].filter((id) => !issueKeys.has(id));
       let cursor = 0;
       const workers = Array.from({ length: Math.min(4, needed.length) }, async () => {
         while (cursor < needed.length) {
@@ -871,13 +951,13 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
       await Promise.all(workers);
       logs = items;
       schedule = days;
-      selectedDate = date;
-      drafts.date = date;
+      selectedRange = range;
       loaded = true;
       selected.clear();
       notice("Worklogs refreshed.");
     }
     async function submit(name) {
+      if (name === "range") return refresh();
       if (name === "settings") {
         await transaction(async (state, save) => {
           const input = {
@@ -906,7 +986,8 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
       } else if (name === "worklog") {
         await transaction(async (state) => {
           const issue = resolveIssue(drafts.issue || "", state.aliases);
-          const date = resolveDate(drafts.date || "");
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(drafts.logDate || "")) throw new Error("Choose a worklog date.");
+          const date = resolveDate(drafts.logDate);
           const parsed = parseWork(drafts.work || "", date, drafts.start);
           const remainingEstimateSeconds = parseEstimate(drafts.estimate || "");
           const api = createApi(credentials(state));
@@ -916,7 +997,8 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
           drafts.work = "";
           drafts.description = "";
           loaded = false;
-          notice(`Saved ${duration(parsed.timeSpentSeconds)} to ${issue}. Worklog #${result.id}.`);
+          const outsideRange = date < selectedRange.from || date > selectedRange.to;
+          notice(`Saved ${duration(parsed.timeSpentSeconds)} to ${issue} on ${date}. Worklog #${result.id}.${outsideRange ? " This date is outside the displayed range." : ""}`);
         });
         const message = status.textContent;
         try {
@@ -1121,19 +1203,30 @@ hr { border: 0; border-top: 1px solid #dce3ed; margin: 22px 0 0; } .actions { di
       <hr><h2>Start a tracker</h2><form data-form="tracker">${field("trackerIssue", "Issue or alias", "NOVA-318", "text", currentIssue())}${field("trackerDescription", "Description")}
       <label class="check"><input type="checkbox" name="stopPrevious">Stop and log the previous tracker for this issue</label><button type="submit" class="primary wide">Start tracker</button></form>`;
       } else {
-        const dayLogs = logs.filter((w) => w.startDate === selectedDate).sort((a, b) => a.startTime.localeCompare(b.startTime));
+        const rangeLogs = logs.filter((w) => w.startDate >= selectedRange.from && w.startDate <= selectedRange.to).sort((a, b) => b.startDate.localeCompare(a.startDate) || a.startTime.localeCompare(b.startTime));
+        const dates = [...new Set(rangeLogs.map((w) => w.startDate))];
         const sum = (items) => items.reduce((n, w) => n + w.timeSpentSeconds, 0);
-        const required = schedule.reduce((n, d) => n + d.requiredSeconds, 0);
+        const required = schedule.filter((d) => d.date >= selectedRange.from && d.date <= selectedRange.to).reduce((n, d) => n + d.requiredSeconds, 0);
         const today = resolveDate("");
-        const delta = sum(logs) - schedule.filter((d) => d.date <= today).reduce((n, d) => n + d.requiredSeconds, 0);
-        main.innerHTML = `<div class="row"><input aria-label="Worklog date" name="date" value="${escape(drafts.date)}" placeholder="YYYY-MM-DD or yesterday">${button("refresh", "Refresh")}</div>
-      ${loaded ? `<div class="summary">Month ${selectedDate.slice(0, 7)}: <strong>${duration(sum(logs))} / ${duration(required)}</strong> <span class="muted">(${delta >= 0 ? "+" : ""}${duration(delta)})</span><br>Selected day: <strong>${duration(sum(dayLogs))} / ${duration(schedule.find((d) => d.date === selectedDate)?.requiredSeconds || 0)}</strong></div>` : '<p class="empty">Connect in Settings, then refresh your worklogs.</p>'}
+        main.innerHTML = `<div class="row range-controls"><label>Date range<select name="range">${[["recent", "Last 7 days"], ["week", "This week"], ["previous", "Last week"], ["custom", "Custom"]].map(([value, label]) => `<option value="${value}" ${drafts.range === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>${button("refresh", "Refresh")}</div>
+      ${drafts.range === "custom" ? `<form data-form="range"><div class="grid">${field("from", "From", "", "date")}${field("to", "To", "", "date")}</div><button type="submit" class="small primary">Apply dates</button></form>` : ""}
+      ${loaded ? `<div class="summary" aria-label="Range summary">${selectedRange.from} – ${selectedRange.to}<br>Selected range: <strong>${duration(sum(rangeLogs))} / ${duration(required)}</strong></div>
+      <details class="monthly"><summary>Monthly progress</summary>${rangeMonths(selectedRange).map(({ month }) => {
+          const logged = sum(logs.filter((w) => w.startDate.startsWith(month)));
+          const monthDays = schedule.filter((d) => d.date.startsWith(month));
+          const required2 = monthDays.reduce((n, d) => n + d.requiredSeconds, 0);
+          const delta = logged - monthDays.filter((d) => d.date <= today).reduce((n, d) => n + d.requiredSeconds, 0);
+          return `<p>${month}: <strong>${duration(logged)} / ${duration(required2)}</strong> <span class="muted">(${delta >= 0 ? "+" : ""}${duration(delta)})</span></p>`;
+        }).join("")}</details>` : '<p class="empty">Connect in Settings, then refresh your worklogs.</p>'}
       <label class="check"><input type="checkbox" name="verbose" ${verbose ? "checked" : ""}>Show descriptions & worklog IDs</label>
-      <div class="table-wrap"><table><thead><tr><th></th><th>Time</th><th>Issue</th><th>Duration</th><th></th></tr></thead><tbody>
-      ${dayLogs.map((w) => `<tr><td><input type="checkbox" aria-label="Select worklog ${escape(w.id)}" data-select="${escape(w.id)}" ${selected.has(w.id) ? "checked" : ""}></td><td class="nowrap">${escape(w.startTime.slice(0, 5))}–${endTime(w)}</td><td><a target="_blank" rel="noopener noreferrer" href="https://${location.hostname}/browse/${encodeURIComponent(issueKeys.get(w.issueId) || w.issueId)}">${escape(issueKeys.get(w.issueId) || `#${w.issueId}`)}</a>${aliasLabels(state, w)}${verbose ? `<p>${escape(w.description)}</p><small>#${escape(w.id)}</small>` : ""}</td><td>${duration(w.timeSpentSeconds)}</td><td>${button("delete", "Delete", w.id, "small danger")}</td></tr>`).join("")}
-      </tbody></table></div>${loaded && !dayLogs.length ? '<p class="empty">No worklogs for this day.</p>' : ""}
-      ${dayLogs.length ? `<div class="actions">${button("delete-selected", "Delete selected", void 0, "small danger")}</div>` : ""}
-      <hr><h2>Log work</h2><form data-form="worklog"><div class="row">${field("issue", "Issue or alias", "NOVA-318", "text", currentIssue())}
+      <div class="table-wrap"><table><thead><tr><th></th><th>Time</th><th>Issue</th><th>Duration</th><th></th></tr></thead>
+      ${dates.map((date) => {
+          const dayLogs = rangeLogs.filter((w) => w.startDate === date);
+          return `<tbody aria-label="Worklogs on ${date}"><tr class="day-heading"><th colspan="5" scope="rowgroup">${date} · ${duration(sum(dayLogs))}</th></tr>
+        ${dayLogs.map((w) => `<tr><td><input type="checkbox" aria-label="Select worklog ${escape(w.id)}" data-select="${escape(w.id)}" ${selected.has(w.id) ? "checked" : ""}></td><td class="nowrap">${escape(w.startTime.slice(0, 5))}–${endTime(w)}</td><td><a target="_blank" rel="noopener noreferrer" href="https://${location.hostname}/browse/${encodeURIComponent(issueKeys.get(w.issueId) || w.issueId)}">${escape(issueKeys.get(w.issueId) || `#${w.issueId}`)}</a>${aliasLabels(state, w)}${verbose ? `<p>${escape(w.description)}</p><small>#${escape(w.id)}</small>` : ""}</td><td>${duration(w.timeSpentSeconds)}</td><td>${button("delete", "Delete", w.id, "small danger")}</td></tr>`).join("")}</tbody>`;
+        }).join("")}</table></div>${loaded && !rangeLogs.length ? '<p class="empty">No worklogs for this range.</p>' : ""}
+      ${rangeLogs.length ? `<div class="actions">${button("delete-selected", "Delete selected", void 0, "small danger")}</div>` : ""}
+      <hr><h2>Log work</h2><form data-form="worklog">${field("logDate", "Worklog date", "", "date")}<div class="row">${field("issue", "Issue or alias", "NOVA-318", "text", currentIssue())}
       ${button("current", "Use current issue", void 0, "small")}</div><div class="grid">${field("work", "Duration or interval", "1h20m or 09:40-11:00")}${field("start", "Start time (optional)", "09:40")}</div>
       <label>Description<textarea name="description">${escape(drafts.description || "")}</textarea></label>${field("estimate", "Remaining estimate (optional)", "2h")}
       ${renderAttributes("work")}

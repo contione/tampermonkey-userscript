@@ -17,6 +17,7 @@
   window.__logs = [log(931842, 10001, '09:40:00', 4800, 'Investigated webhook retries'), log(931859, 10002, '13:00:00', 2700, 'Release checklist')]
   window.__requests = []
   window.__attributes = []
+  window.__schedule = [{ date: fixed, requiredSeconds: 28800, type: 'WORKING_DAY' }]
   window.GM_xmlhttpRequest = options => {
     window.__requests.push({ method: options.method, url: options.url, data: options.data })
     const url = new URL(options.url)
@@ -25,7 +26,7 @@
     else if (url.pathname.includes('/rest/api/3/issue/')) {
       const issue = decodeURIComponent(url.pathname.split('/').pop())
       data = { id: issue === 'OPS-42' || issue === '10002' ? '10002' : '10001', key: issue === 'OPS-42' || issue === '10002' ? 'OPS-42' : 'NOVA-318' }
-    } else if (url.pathname.includes('/user-schedule')) data = { results: [{ date: fixed, requiredSeconds: 28800, type: 'WORKING_DAY' }] }
+    } else if (url.pathname.includes('/user-schedule')) data = { results: window.__schedule.filter(day => day.date >= url.searchParams.get('from') && day.date <= url.searchParams.get('to')) }
     else if (url.pathname === '/4/work-attributes') {
       if (window.__failAttributes) { status = 403; data = { errors: { message: 'Attributes access denied' } } }
       else data = { results: window.__attributes, metadata: {} }
@@ -39,7 +40,10 @@
       const id = url.pathname.split('/').pop()
       if (window.__deleteFailId === id) { status = 403; data = { errors: { message: 'Permission denied' } } }
       else { window.__logs = window.__logs.filter(w => String(w.tempoWorklogId) !== id); status = 204 }
-    } else if (url.pathname.includes('/worklogs/user/')) data = { results: window.__logs, metadata: {} }
+    } else if (url.pathname.includes('/worklogs/user/')) {
+      if (window.__failReads) { status = 403; data = { errors: { message: 'Cannot read worklogs' } } }
+      else data = { results: window.__logs.filter(log => log.startDate >= url.searchParams.get('from') && log.startDate <= url.searchParams.get('to')), metadata: {} }
+    }
     else { status = 404; data = { errors: { message: 'Fixture route not found' } } }
     const handle = setTimeout(() => options.onload({ status, responseText: data ? JSON.stringify(data) : '', responseHeaders: 'Content-Type: application/json', finalUrl: url.href }), 10)
     return { abort() { clearTimeout(handle); options.onabort?.({}) } }

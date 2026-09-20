@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 const script = readFileSync('dist/tempo.user.js','utf8')
 const html = readFileSync('e2e/jira.html','utf8')
 async function launch(page: Page, setup = false) {
+  await page.clock.setFixedTime(new Date('2026-09-20T10:00:00+02:00'))
   await page.route('https://demo.atlassian.net/**', route => route.fulfill({ contentType:'text/html', body: html }))
   await page.addInitScript({ path:'e2e/fixture.js' })
   await page.goto(`https://demo.atlassian.net/browse/NOVA-318${setup ? '?setup' : ''}`)
@@ -10,8 +11,6 @@ async function launch(page: Page, setup = false) {
   await page.getByRole('button',{name:'Open Tempo'}).click()
   if (!setup) {
     await expect(page.getByRole('status')).toContainText('Worklogs refreshed')
-    await page.getByRole('textbox',{name:'Worklog date'}).fill('2026-09-19')
-    await page.getByRole('button',{name:'Refresh',exact:true}).click()
     await expect(page.getByRole('button',{name:'Refresh',exact:true})).toBeEnabled()
     await expect(page.getByRole('link',{name:'NOVA-318',exact:true})).toBeVisible()
   }
@@ -206,4 +205,104 @@ test('tracker stop preserves intervals until required attributes are filled', as
   await expect(page.getByRole('status')).toContainText('Logged all intervals')
   const body = await page.evaluate(() => JSON.parse((window as any).__requests.find((r: any) => r.method === 'POST').data))
   expect(body.attributes).toEqual([{key: 'Task', value: 'Support'}])
+})
+
+test('defaults to the last seven days, groups newest dates first and changes week presets', async ({page}) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await launch(page)
+  await expect(page.getByRole('combobox', {name: 'Date range', exact: true})).toHaveValue('recent')
+  await expect(page.getByLabel('Worklog date', {exact: true})).toHaveValue('2026-09-20')
+  await expect(page.getByLabel('Range summary')).toContainText('2026-09-14 – 2026-09-20')
+  await page.evaluate(() => {
+    const base = (window as any).__logs[0]
+    ;(window as any).__logs.push(
+      {...base, tempoWorklogId: 941001, startDate: '2026-09-14', timeSpentSeconds: 1800},
+      {...base, tempoWorklogId: 941002, startDate: '2026-09-13', timeSpentSeconds: 3600},
+      {...base, tempoWorklogId: 941003, startDate: '2026-09-20', timeSpentSeconds: 900},
+      {...base, tempoWorklogId: 941004, startDate: '2026-09-21', timeSpentSeconds: 3600}
+    )
+  })
+  await page.getByRole('button', {name: 'Refresh', exact: true}).click()
+  await expect(page.getByLabel('Range summary')).toContainText('Selected range: 2h50m / 8h')
+  expect(await page.locator('tbody[aria-label]').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')))).toEqual([
+    'Worklogs on 2026-09-20', 'Worklogs on 2026-09-19', 'Worklogs on 2026-09-14'
+  ])
+  await expect(page.getByLabel('Select worklog 941002')).toHaveCount(0)
+  await expect(page.getByLabel('Select worklog 941004')).toHaveCount(0)
+  if (process.env.TEMPO_QA_DIR) {
+    await page.screenshot({path: `${process.env.TEMPO_QA_DIR}/week-desktop.png`})
+    await page.setViewportSize({width: 390, height: 844})
+    await page.screenshot({path: `${process.env.TEMPO_QA_DIR}/week-mobile.png`})
+  }
+  await page.getByRole('combobox', {name: 'Date range', exact: true}).selectOption('previous')
+  await expect(page.getByLabel('Range summary')).toContainText('2026-09-07 – 2026-09-13')
+  await expect(page.getByLabel('Select worklog 941002')).toBeVisible()
+  await expect(page.getByLabel('Select worklog 941003')).toHaveCount(0)
+  await expect(page.getByLabel('Worklog date', {exact: true})).toHaveValue('2026-09-20')
+  await page.getByRole('combobox', {name: 'Date range', exact: true}).selectOption('week')
+  await expect(page.getByLabel('Range summary')).toContainText('2026-09-14 – 2026-09-20')
+  expect(errors).toEqual([])
+})
+
+test('custom calendar range spans months and logging uses its independent date', async ({page}) => {
+  await launch(page)
+  await page.evaluate(() => {
+    const base = (window as any).__logs[0]
+    ;(window as any).__logs = [
+      {...base, tempoWorklogId: 942001, startDate: '2026-08-31', timeSpentSeconds: 1800},
+      {...base, tempoWorklogId: 942002, startDate: '2026-09-01', timeSpentSeconds: 3600},
+      {...base, tempoWorklogId: 942003, startDate: '2026-08-10', timeSpentSeconds: 7200},
+      {...base, tempoWorklogId: 942004, startDate: '2026-09-10', timeSpentSeconds: 7200}
+    ]
+    ;(window as any).__schedule = [
+      {date: '2026-08-31', requiredSeconds: 14400, type: 'WORKING_DAY'},
+      {date: '2026-08-10', requiredSeconds: 14400, type: 'WORKING_DAY'},
+      {date: '2026-09-01', requiredSeconds: 28800, type: 'WORKING_DAY'},
+      {date: '2026-09-10', requiredSeconds: 28800, type: 'WORKING_DAY'}
+    ]
+  })
+  await page.getByRole('combobox', {name: 'Date range', exact: true}).selectOption('custom')
+  await expect(page.getByLabel('From', {exact: true})).toHaveAttribute('type', 'date')
+  await expect(page.getByLabel('To', {exact: true})).toHaveAttribute('type', 'date')
+  await page.getByLabel('From', {exact: true}).fill('2026-08-31')
+  await page.getByLabel('To', {exact: true}).fill('2026-09-01')
+  await page.getByRole('button', {name: 'Apply dates'}).click()
+  await expect(page.getByLabel('Range summary')).toContainText('Selected range: 1h30m / 12h')
+  await expect(page.getByLabel('Select worklog 942003')).toHaveCount(0)
+  await expect(page.getByLabel('Select worklog 942004')).toHaveCount(0)
+  await page.getByText('Monthly progress', {exact: true}).click()
+  await expect(page.locator('.monthly')).toContainText('2026-08: 2h30m / 8h')
+  await expect(page.locator('.monthly')).toContainText('2026-09: 3h / 16h')
+  const query = await page.evaluate(() => (window as any).__requests.filter((r: any) => r.url.includes('/worklogs/user/')).at(-1).url)
+  expect(new URL(query).searchParams.get('from')).toBe('2026-08-01')
+  expect(new URL(query).searchParams.get('to')).toBe('2026-09-30')
+  await expect(page.getByLabel('Worklog date', {exact: true})).toHaveValue('2026-09-20')
+  await page.getByLabel('Worklog date', {exact: true}).fill('2026-09-18')
+  await page.getByLabel('Duration or interval', {exact: true}).fill('15m')
+  await page.getByRole('button', {name: 'Save worklog'}).click()
+  await expect(page.getByRole('status')).toContainText('on 2026-09-18')
+  await expect(page.getByRole('status')).toContainText('outside the displayed range')
+  await expect(page.getByLabel('Range summary')).toContainText('2026-08-31 – 2026-09-01')
+  const body = await page.evaluate(() => JSON.parse((window as any).__requests.find((r: any) => r.method === 'POST').data))
+  expect(body.startDate).toBe('2026-09-18')
+})
+
+test('invalid custom dates make no requests and failed refresh preserves the displayed range', async ({page}) => {
+  await launch(page)
+  await page.getByRole('combobox', {name: 'Date range', exact: true}).selectOption('custom')
+  await page.getByLabel('From', {exact: true}).fill('2026-09-20')
+  await page.getByLabel('To', {exact: true}).fill('2026-09-19')
+  const before = await page.evaluate(() => (window as any).__requests.length)
+  await page.getByRole('button', {name: 'Apply dates'}).click()
+  await expect(page.locator('.status.error')).toBeVisible()
+  expect(await page.evaluate(() => (window as any).__requests.length)).toBe(before)
+  await page.getByLabel('From', {exact: true}).fill('')
+  await page.getByRole('button', {name: 'Apply dates'}).click()
+  expect(await page.evaluate(() => (window as any).__requests.length)).toBe(before)
+  await page.evaluate(() => { (window as any).__failReads = true })
+  await page.getByRole('combobox', {name: 'Date range', exact: true}).selectOption('previous')
+  await expect(page.getByRole('status')).toContainText('Unauthorized access to Tempo')
+  await expect(page.getByLabel('Range summary')).toContainText('2026-09-14 – 2026-09-20')
+  await expect(page.getByLabel('Select worklog 931842')).toBeVisible()
 })

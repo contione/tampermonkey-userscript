@@ -1,6 +1,6 @@
 {
   "name": "tempo-tampermonkey-userscript",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "description": "Tempo worklogs and local trackers inside Jira Cloud",
